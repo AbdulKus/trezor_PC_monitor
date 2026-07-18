@@ -52,8 +52,13 @@ jobs:
             -OutFile downloads/PresentMon-v2.5.1.msi
           $presentMonExtract = (Join-Path (Resolve-Path downloads) 'presentmon-sdk')
           New-Item -ItemType Directory -Force $presentMonExtract | Out-Null
-          & msiexec.exe /a (Resolve-Path downloads/PresentMon-v2.5.1.msi) /qn TARGETDIR="$presentMonExtract"
-          if ($LASTEXITCODE -ne 0) { throw "PresentMon MSI extraction failed: $LASTEXITCODE" }
+          $presentMonMsi = (Resolve-Path downloads/PresentMon-v2.5.1.msi).Path
+          $extract = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/a', "`"$presentMonMsi`"", '/qn', "TARGETDIR=`"$presentMonExtract`""
+          )
+          if ($extract.ExitCode -ne 0) {
+            throw "PresentMon MSI extraction failed: $($extract.ExitCode)"
+          }
           $presentMonDll = Get-ChildItem $presentMonExtract -Recurse `
             -Filter PresentMonAPI2Loader.dll | Where-Object FullName -match '\\SDK\\' |
             Select-Object -First 1
