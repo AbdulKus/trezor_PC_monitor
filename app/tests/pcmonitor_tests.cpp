@@ -50,6 +50,7 @@ class PcMonitorTests : public QObject {
   void protocolLayoutAndCrc();
   void zipRoundTripAndRejectsTruncation();
   void projectRoundTripWithBitmap();
+  void screenNamesAndSharedButtons();
   void bitmapFontsAreExactAndContainCyrillic();
   void oneBitConversionRespondsImmediately();
   void animatedGifImportsEveryFrame();
@@ -193,6 +194,9 @@ void PcMonitorTests::animatedGifImportsEveryFrame() {
   compact.frames.resize(3);
   compact.durationsMs.resize(3);
   ProjectModel project;
+  project.resources().clear();
+  project.screens().resize(1);
+  project.screens().first().widgets.clear();
   project.resources() << compact;
   WidgetModel animation;
   animation.id = QStringLiteral("gif-test");
@@ -302,6 +306,7 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   QTemporaryDir directory;
   QVERIFY(directory.isValid());
   ProjectModel original;
+  const int bundledResourceCount = original.resources().size();
   ResourceModel resource;
   resource.id = "test-icon";
   resource.name = QString::fromUtf8("Тестовая иконка");
@@ -318,8 +323,8 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   original.actions() << HostAction{42, QStringLiteral("Copy"),
                                    HostActionType::Shortcut,
                                    QStringLiteral("CTRL+C"), false};
-  original.screens().first().leftShort =
-      ButtonBinding{TM_ACTION_HOST, 0, 42};
+  original.setSharedButtonBindings(true);
+  original.setButtonBinding(0, ButtonBinding{TM_ACTION_HOST, 0, 42});
 
   const QString path = directory.filePath("monitor.tmon");
   QString error;
@@ -328,23 +333,58 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   QVERIFY2(loaded.load(path, &error), qPrintable(error));
   QCOMPARE(loaded.screens().size(), original.screens().size());
   QCOMPARE(loaded.screens()[1].enabled, false);
-  QCOMPARE(loaded.resources().size(), 1);
-  QCOMPARE(loaded.resources().first().frames.first(), frame);
+  QCOMPARE(loaded.resources().size(), bundledResourceCount + 1);
+  QCOMPARE(loaded.resources().last().frames.first(), frame);
   QVERIFY(loaded.screens().first().widgets[5].autoRange);
   QVERIFY(loaded.burnInProtection());
   QCOMPARE(loaded.pixelShiftInset(), 2);
   QCOMPARE(loaded.actions().size(), 1);
   QCOMPARE(loaded.actions().first().value, QStringLiteral("CTRL+C"));
-  QCOMPARE(loaded.screens().first().leftShort.hostActionId, quint16(42));
+  QVERIFY(loaded.sharedButtonBindings());
+  for (const ScreenModel &screen : loaded.screens()) {
+    QCOMPARE(screen.leftShort.type, TM_ACTION_HOST);
+    QCOMPARE(screen.leftShort.hostActionId, quint16(42));
+  }
+}
+
+void PcMonitorTests::screenNamesAndSharedButtons() {
+  ProjectModel project;
+  const QStringList expectedNames = {QStringLiteral("Main"),
+                                     QStringLiteral("Monitor+GIF"),
+                                     QStringLiteral("Small data"),
+                                     QStringLiteral("GIF ghost"),
+                                     QStringLiteral("GIF road"),
+                                     QStringLiteral("GIF cat")};
+  QCOMPARE(project.screens().size(), expectedNames.size());
+  QCOMPARE(project.resources().size(), 4);
+  for (int i = 0; i < expectedNames.size(); ++i) {
+    QCOMPARE(project.screens()[i].name, expectedNames[i]);
+    QCOMPARE(project.screens()[i].leftShort.type, TM_ACTION_PREVIOUS_PAGE);
+    QCOMPARE(project.screens()[i].rightShort.type, TM_ACTION_NEXT_PAGE);
+  }
+
+  ScreenModel fresh;
+  QCOMPARE(fresh.leftShort.type, TM_ACTION_PREVIOUS_PAGE);
+  QCOMPARE(fresh.rightShort.type, TM_ACTION_NEXT_PAGE);
+
+  project.setCurrentScreen(2);
+  project.setButtonBinding(1, ButtonBinding{TM_ACTION_GO_TO_PAGE, 4, 0});
+  project.setSharedButtonBindings(true);
+  QVERIFY(project.sharedButtonBindings());
+  for (const ScreenModel &screen : project.screens()) {
+    QCOMPARE(screen.leftLong.type, TM_ACTION_GO_TO_PAGE);
+    QCOMPARE(screen.leftLong.target, quint8(4));
+  }
+  QVERIFY(project.renameScreen(0, QStringLiteral("  Dashboard  ")));
+  QCOMPARE(project.screens().first().name, QStringLiteral("Dashboard"));
+  QVERIFY(!project.renameScreen(0, QStringLiteral("   ")));
 }
 
 void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   ProjectModel project;
-  QCOMPARE(project.screens().first().name, QStringLiteral("Основной"));
+  QCOMPARE(project.screens().first().name, QStringLiteral("Main"));
+  QCOMPARE(project.screens().size(), 6);
   QCOMPARE(project.screens().first().widgets.size(), 12);
-  QCOMPARE(project.screens().first().widgets[5].geometry, QRect(59, 45, 67, 17));
-  QCOMPARE(project.screens().first().widgets[7].metric,
-           QStringLiteral("gpu.active.load"));
   const PackCompileResult first = PackCompiler::compile(project);
   QVERIFY2(first.ok(), qPrintable(first.error));
   const PackCompileResult second = PackCompiler::compile(project);
@@ -364,7 +404,8 @@ void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   bool foundAutoRangeGraph = false;
   bool foundFpsPresetGraph = false;
   for (quint16 i = 0; i < header.widget_count; ++i) {
-    if (widgets[i].type == TM_WIDGET_BAR_HORIZONTAL &&
+    if ((widgets[i].type == TM_WIDGET_BAR_HORIZONTAL ||
+         widgets[i].type == TM_WIDGET_BAR_VERTICAL) &&
         widgets[i].maximum == 10000) {
       QCOMPARE(widgets[i].minimum, qint32(0));
       QCOMPARE(widgets[i].maximum, qint32(10000));

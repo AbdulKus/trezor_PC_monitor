@@ -5,6 +5,7 @@
 *.user
 *.tmpack
 *.tmon
+!app/assets/default-main.tmon
 portable-data/
 *.log
 .DS_Store

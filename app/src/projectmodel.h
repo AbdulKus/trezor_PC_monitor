@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QFont>
+#include <QHash>
 #include <QImage>
 #include <QJsonObject>
 #include <QObject>
@@ -55,9 +56,9 @@ struct ScreenModel {
   QString name = QStringLiteral("Экран");
   bool enabled = true;
   QVector<WidgetModel> widgets;
-  ButtonBinding leftShort;
+  ButtonBinding leftShort{TM_ACTION_PREVIOUS_PAGE, 0, 0};
   ButtonBinding leftLong;
-  ButtonBinding rightShort;
+  ButtonBinding rightShort{TM_ACTION_NEXT_PAGE, 0, 0};
   ButtonBinding rightLong;
 };
 
@@ -90,8 +91,12 @@ class ProjectModel : public QObject {
   void setModified(bool modified = true);
   bool burnInProtection() const { return burnInProtection_; }
   int pixelShiftInset() const { return pixelShiftInset_; }
+  bool sharedButtonBindings() const { return sharedButtonBindings_; }
   void setBurnInProtection(bool enabled);
   void setPixelShiftInset(int pixels);
+  void setSharedButtonBindings(bool enabled);
+  void setButtonBinding(int slot, const ButtonBinding &binding);
+  bool renameScreen(int index, const QString &name);
 
   void resetToDefault();
   bool save(const QString &path, QString *error = nullptr);
@@ -105,6 +110,9 @@ class ProjectModel : public QObject {
   void modifiedChanged(bool modified);
 
  private:
+  bool loadFiles(const QHash<QString, QByteArray> &files,
+                 QString *error = nullptr);
+
   QVector<ScreenModel> screens_;
   QVector<ResourceModel> resources_;
   QVector<HostAction> actions_;
@@ -113,6 +121,7 @@ class ProjectModel : public QObject {
   bool modified_ = false;
   bool burnInProtection_ = false;
   int pixelShiftInset_ = 1;
+  bool sharedButtonBindings_ = false;
 };
 
 QString widgetTypeName(tm_widget_type_t type);

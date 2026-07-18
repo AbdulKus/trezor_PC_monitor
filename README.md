@@ -17,11 +17,11 @@ Turn a dedicated **Trezor One (T1B1)** into a compact 128×64 OLED system monito
 - Sparkline graphs keep zero at the baseline and smoothly adapt their upper bound with headroom and visible scale-change markers.
 - FPS graphs use stable 30/60/90/120/144/165/180/200/240/300/360/480 presets and require about 10 seconds of evidence before switching, so short drops remain visible valleys.
 - Text, images, animated GIFs, bars, segmented gauges, rings, sparklines, icons, lines and threshold warnings.
-- Seven ready-made layouts ranging from compact dashboards to large, readable single-metric pages.
+- Six ready-made layouts with telemetry dashboards and animated GIF pages, embedded from the bundled default `.tmon` project.
 - CPU, RAM, GPU, VRAM, FPS/frame-time and supported temperature/power metrics.
 - PresentMon integration for foreground-game FPS, with automatic discovery of the bundled or installed SDK loader; unavailable readings stay `N/A` instead of becoming fake zeroes.
 - Media is resized and converted on the PC to its final 1-bit dimensions. Only media used on enabled pages is uploaded.
-- Short/long button actions, local page switching, shortcuts and commands.
+- Short/long button actions, local page switching, shortcuts and commands; assignments can be per-screen or shared by every screen.
 - Tray operation, reconnect recovery and automatic layout re-upload after power loss.
 - A global single-instance guard prevents two portable copies from fighting over the same HID device.
 - Russian and English UI, remembered together with the selected Dark/Light/Forest theme.

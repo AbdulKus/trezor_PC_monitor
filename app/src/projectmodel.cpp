@@ -1,9 +1,11 @@
 #include "projectmodel.h"
 
 #include <QBuffer>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QResource>
 #include <QStringList>
 #include <QUuid>
 
@@ -26,7 +28,14 @@ ButtonBinding bindingFromJson(const QJsonObject &object) {
 }
 }  // namespace
 
-ProjectModel::ProjectModel(QObject *parent) : QObject(parent) { resetToDefault(); }
+ProjectModel::ProjectModel(QObject *parent) : QObject(parent) {
+  static const bool resourcesReady = [] {
+    Q_INIT_RESOURCE(fonts);
+    return true;
+  }();
+  Q_UNUSED(resourcesReady);
+  resetToDefault();
+}
 
 void ProjectModel::setCurrentScreen(int index) {
   if (index < 0 || index >= screens_.size() || index == currentScreen_) return;
@@ -54,12 +63,108 @@ void ProjectModel::setPixelShiftInset(int pixels) {
   setModified();
 }
 
+void ProjectModel::setSharedButtonBindings(bool enabled) {
+  if (sharedButtonBindings_ == enabled) return;
+  sharedButtonBindings_ = enabled;
+  if (enabled && !screens_.isEmpty()) {
+    const ScreenModel source = screens_[qBound(0, currentScreen_, screens_.size() - 1)];
+    for (ScreenModel &screen : screens_) {
+      screen.leftShort = source.leftShort;
+      screen.leftLong = source.leftLong;
+      screen.rightShort = source.rightShort;
+      screen.rightLong = source.rightLong;
+    }
+  }
+  setModified();
+}
+
+void ProjectModel::setButtonBinding(int slot, const ButtonBinding &binding) {
+  if (slot < 0 || slot >= 4 || screens_.isEmpty()) return;
+  auto assign = [slot, &binding](ScreenModel &screen) {
+    ButtonBinding *values[] = {&screen.leftShort, &screen.leftLong,
+                               &screen.rightShort, &screen.rightLong};
+    ButtonBinding &current = *values[slot];
+    if (current.type == binding.type && current.target == binding.target &&
+        current.hostActionId == binding.hostActionId)
+      return false;
+    current = binding;
+    return true;
+  };
+  bool changed = false;
+  if (sharedButtonBindings_) {
+    for (ScreenModel &screen : screens_) changed = assign(screen) || changed;
+  } else {
+    changed = assign(screens_[qBound(0, currentScreen_, screens_.size() - 1)]);
+  }
+  if (changed) setModified();
+}
+
+bool ProjectModel::renameScreen(int index, const QString &name) {
+  const QString cleanName = name.trimmed();
+  if (index < 0 || index >= screens_.size() || cleanName.isEmpty() ||
+      screens_[index].name == cleanName)
+    return false;
+  screens_[index].name = cleanName;
+  setModified();
+  return true;
+}
+
 void ProjectModel::resetToDefault() {
   screens_.clear();
   resources_.clear();
   actions_.clear();
   burnInProtection_ = false;
   pixelShiftInset_ = 1;
+  sharedButtonBindings_ = false;
+
+  struct DefaultCache {
+    bool attempted = false;
+    bool valid = false;
+    QVector<ScreenModel> screens;
+    QVector<ResourceModel> resources;
+    QVector<HostAction> actions;
+    bool burnInProtection = false;
+    int pixelShiftInset = 1;
+  };
+  static DefaultCache cache;
+  if (!cache.attempted) {
+    cache.attempted = true;
+    QFile embedded(QStringLiteral(":/defaults/main.tmon"));
+    QHash<QString, QByteArray> files;
+    QString error;
+    if (embedded.open(QIODevice::ReadOnly) &&
+        ZipStore::read(embedded.readAll(), &files, &error) &&
+        loadFiles(files, &error) && screens_.size() == 6) {
+      const QStringList names = {QStringLiteral("Main"),
+                                 QStringLiteral("Monitor+GIF"),
+                                 QStringLiteral("Small data"),
+                                 QStringLiteral("GIF ghost"),
+                                 QStringLiteral("GIF road"),
+                                 QStringLiteral("GIF cat")};
+      for (int i = 0; i < names.size(); ++i) screens_[i].name = names[i];
+      sharedButtonBindings_ = false;
+      cache.screens = screens_;
+      cache.resources = resources_;
+      cache.actions = actions_;
+      cache.burnInProtection = burnInProtection_;
+      cache.pixelShiftInset = pixelShiftInset_;
+      cache.valid = true;
+    }
+  }
+  if (cache.valid) {
+    screens_ = cache.screens;
+    resources_ = cache.resources;
+    actions_ = cache.actions;
+    burnInProtection_ = cache.burnInProtection;
+    pixelShiftInset_ = cache.pixelShiftInset;
+    sharedButtonBindings_ = false;
+    currentScreen_ = 0;
+    filePath_.clear();
+    modified_ = false;
+    emit changed();
+    emit currentScreenChanged(0);
+    return;
+  }
 
   // Compact layout contributed by the user as "Screen 8". It deliberately
   // starts the default project: the most useful values are readable at a
@@ -349,9 +454,10 @@ void ProjectModel::resetToDefault() {
 
 QJsonObject ProjectModel::toJson() const {
   QJsonObject root{{"format", "trezor-pc-monitor"},
-                   {"version", 4},
+                   {"version", 5},
                    {"burnInProtection", burnInProtection_},
-                   {"pixelShiftInset", pixelShiftInset_}};
+                   {"pixelShiftInset", pixelShiftInset_},
+                   {"sharedButtonBindings", sharedButtonBindings_}};
   QJsonArray screens;
   for (const ScreenModel &screen : screens_) {
     QJsonArray widgets;
@@ -418,7 +524,7 @@ QJsonObject ProjectModel::toJson() const {
 bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   const int version = root.value("version").toInt();
   if (root.value("format") != "trezor-pc-monitor" ||
-      (version < 1 || version > 4)) {
+      (version < 1 || version > 5)) {
     if (error) *error = QStringLiteral("Неподдерживаемый формат проекта");
     return false;
   }
@@ -495,6 +601,16 @@ bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   actions_ = newActions;
   burnInProtection_ = root.value("burnInProtection").toBool(false);
   pixelShiftInset_ = qBound(1, root.value("pixelShiftInset").toInt(1), 4);
+  sharedButtonBindings_ = root.value("sharedButtonBindings").toBool(false);
+  if (sharedButtonBindings_ && !screens_.isEmpty()) {
+    const ScreenModel source = screens_.first();
+    for (ScreenModel &screen : screens_) {
+      screen.leftShort = source.leftShort;
+      screen.leftLong = source.leftLong;
+      screen.rightShort = source.rightShort;
+      screen.rightLong = source.rightLong;
+    }
+  }
   currentScreen_ = 0;
   return true;
 }
@@ -520,6 +636,16 @@ bool ProjectModel::save(const QString &path, QString *error) {
 bool ProjectModel::load(const QString &path, QString *error) {
   QHash<QString, QByteArray> files;
   if (!ZipStore::read(path, &files, error)) return false;
+  if (!loadFiles(files, error)) return false;
+  filePath_ = QFileInfo(path).absoluteFilePath();
+  setModified(false);
+  emit changed();
+  emit currentScreenChanged(0);
+  return true;
+}
+
+bool ProjectModel::loadFiles(const QHash<QString, QByteArray> &files,
+                             QString *error) {
   QJsonParseError jsonError;
   QJsonDocument document = QJsonDocument::fromJson(files.value("project.json"),
                                                     &jsonError);
@@ -538,10 +664,6 @@ bool ProjectModel::load(const QString &path, QString *error) {
       }
     }
   }
-  filePath_ = QFileInfo(path).absoluteFilePath();
-  setModified(false);
-  emit changed();
-  emit currentScreenChanged(0);
   return true;
 }
 

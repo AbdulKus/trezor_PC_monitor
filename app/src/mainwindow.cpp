@@ -542,6 +542,19 @@ QWidget *MainWindow::createScreensTab() {
             project_.setModified();
             updateBindingControls();
           });
+  connect(screenList_, &QListWidget::itemDoubleClicked, this,
+          [this](QListWidgetItem *item) {
+            const int row = screenList_->row(item);
+            if (row < 0 || row >= project_.screens().size()) return;
+            bool accepted = false;
+            const QString name = QInputDialog::getText(
+                this, I18n::text(QStringLiteral("Переименовать экран")),
+                I18n::text(QStringLiteral("Название экрана:")), QLineEdit::Normal,
+                project_.screens()[row].name, &accepted);
+            if (!accepted || !project_.renameScreen(row, name)) return;
+            refreshScreens();
+            screenList_->setCurrentRow(row);
+          });
   connect(widgetList_, &QListWidget::currentRowChanged, this, [this](int row) {
     canvas_->setSelectedWidget(row);
     refreshProperties(row);
@@ -549,7 +562,15 @@ QWidget *MainWindow::createScreensTab() {
   });
   connect(addScreen, &QPushButton::clicked, this, [this] {
     if (project_.screens().size() >= int(TM_MAX_SCREENS)) return;
-    ScreenModel screen; screen.name = QStringLiteral("Экран %1").arg(project_.screens().size() + 1);
+    ScreenModel screen;
+    screen.name = QStringLiteral("Экран %1").arg(project_.screens().size() + 1);
+    if (project_.sharedButtonBindings() && !project_.screens().isEmpty()) {
+      const ScreenModel &source = project_.screens().first();
+      screen.leftShort = source.leftShort;
+      screen.leftLong = source.leftLong;
+      screen.rightShort = source.rightShort;
+      screen.rightLong = source.rightLong;
+    }
     project_.screens() << screen; project_.setModified(); refreshScreens();
     screenList_->setCurrentRow(project_.screens().size() - 1);
   });
@@ -951,8 +972,17 @@ QWidget *MainWindow::createResourcesTab() {
 
 QWidget *MainWindow::createButtonsTab() {
   QWidget *page = new QWidget; QHBoxLayout *layout = new QHBoxLayout(page);
-  QGroupBox *bindings = new QGroupBox(QStringLiteral("Действия текущего экрана"));
+  QGroupBox *bindings = new QGroupBox(QStringLiteral("Назначения кнопок"));
   QFormLayout *form = new QFormLayout(bindings);
+  sharedButtonBindings_ = new QCheckBox(
+      QStringLiteral("Общие кнопки для всех экранов"));
+  sharedButtonBindings_->setToolTip(QStringLiteral(
+      "При включении назначения текущего экрана копируются на все экраны."));
+  form->addRow(sharedButtonBindings_);
+  connect(sharedButtonBindings_, &QCheckBox::toggled, this, [this](bool enabled) {
+    project_.setSharedButtonBindings(enabled);
+    updateBindingControls();
+  });
   const QStringList labels = {"Левая — нажатие", "Левая — удержание",
                               "Правая — нажатие", "Правая — удержание"};
   for (int i = 0; i < 4; i++) {
@@ -960,10 +990,7 @@ QWidget *MainWindow::createButtonsTab() {
     connect(bindingCombos_[i], &QComboBox::currentIndexChanged, this, [this, i](int) {
       if (project_.currentScreen() >= project_.screens().size()) return;
       ButtonBinding value = bindingFromCode(bindingCombos_[i]->currentData().toUInt());
-      ScreenModel &screen = project_.screens()[project_.currentScreen()];
-      ButtonBinding *bindings[] = {&screen.leftShort, &screen.leftLong,
-                                   &screen.rightShort, &screen.rightLong};
-      *bindings[i] = value; project_.setModified();
+      project_.setButtonBinding(i, value);
     });
   }
   QWidget *actions = new QWidget; QVBoxLayout *actionLayout = new QVBoxLayout(actions);
@@ -1031,9 +1058,12 @@ void MainWindow::refreshScreens() {
     item->setCheckState(screen.enabled ? Qt::Checked : Qt::Unchecked);
     item->setForeground(screen.enabled ? palette().text().color()
                                        : QColor(QStringLiteral("#64748b")));
-    item->setToolTip(screen.enabled
-                         ? QStringLiteral("Экран включён и попадёт на устройство")
-                         : QStringLiteral("Экран сохранён в проекте, но не компилируется"));
+    const QString stateTip = screen.enabled
+                                 ? QStringLiteral("Экран включён и попадёт на устройство")
+                                 : QStringLiteral("Экран сохранён в проекте, но не компилируется");
+    item->setToolTip(I18n::text(stateTip) + QStringLiteral("\n") +
+                     I18n::text(QStringLiteral(
+                         "Двойной щелчок — переименовать.")));
   }
   screenList_->setCurrentRow(project_.currentScreen());
   const int selection = project_.currentScreen() < project_.screens().size() &&
@@ -1339,6 +1369,10 @@ void MainWindow::refreshActions() {
 
 void MainWindow::updateBindingControls() {
   if (!bindingCombos_[0] || project_.currentScreen() >= project_.screens().size()) return;
+  if (sharedButtonBindings_) {
+    QSignalBlocker blocker(sharedButtonBindings_);
+    sharedButtonBindings_->setChecked(project_.sharedButtonBindings());
+  }
   const ScreenModel &screen = project_.screens()[project_.currentScreen()];
   const ButtonBinding values[] = {screen.leftShort, screen.leftLong, screen.rightShort, screen.rightLong};
   for (int i = 0; i < 4; i++) {
