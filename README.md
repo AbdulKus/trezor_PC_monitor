@@ -10,6 +10,8 @@ Turn a dedicated **Trezor One (T1B1)** into a compact 128×64 OLED system monito
 > This is unofficial community firmware, not a wallet application. Installing unofficial firmware can erase the device storage. Use a dedicated Trezor One and make sure your recovery seed is safely backed up before flashing.
 
 ![Screen editor](assets/screenshots/editor.png)
+![Screen editor](assets/screenshots/5395475558512139797.jpg)
+![Screen editor](assets/screenshots/5395475558512139802.jpg)
 
 ## What it does
 
