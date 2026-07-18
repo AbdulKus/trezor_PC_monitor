@@ -22,6 +22,7 @@ add_library(pcmonitor_core
     app/src/firmwareupdater.cpp
     app/src/pixelfont.cpp
     app/src/resourceimporter.cpp
+    app/src/fpsscaler.cpp
     app/fonts.qrc
     protocol/protocol.c
 )
@@ -40,6 +41,7 @@ add_executable(trezor-pc-monitor WIN32
     app/src/iconeditor.cpp
     app/src/resourcepreview.cpp
     app/src/xptheme.cpp
+    app/src/i18n.cpp
 )
 if(WIN32)
   target_sources(trezor-pc-monitor PRIVATE app/windows/pcmonitor.rc)
@@ -62,6 +64,9 @@ if(BUILD_TESTING)
   target_link_libraries(pcmonitor_tests PRIVATE
       pcmonitor_core Qt6::Test Qt6::Widgets)
   add_test(NAME pcmonitor_tests COMMAND pcmonitor_tests)
+  set_tests_properties(pcmonitor_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION
+      "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()
 
 set(PCMONITOR_FIRMWARE_DIR "${CMAKE_SOURCE_DIR}/firmware/prebuilt"

@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCheckBox>
@@ -51,6 +52,7 @@
 
 #include "designcanvas.h"
 #include "iconeditor.h"
+#include "i18n.h"
 #include "pixelfont.h"
 #include "resourceimporter.h"
 #include "resourcepreview.h"
@@ -74,10 +76,7 @@ const QStringList kMetrics = {
     "system.power.estimated"};
 
 QString portableSettingsPath() {
-  const QString directory = QCoreApplication::applicationDirPath() +
-                            QStringLiteral("/portable-data");
-  QDir().mkpath(directory);
-  return directory + QStringLiteral("/settings.ini");
+  return I18n::settingsPath();
 }
 
 void rememberProjectPath(const QString &path) {
@@ -132,7 +131,7 @@ MainWindow::MainWindow(QWidget *parent)
           });
   connect(&device_, &DeviceConnection::statusChanged, this,
           [this](const QString &status) {
-            deviceStatus_->setText(status);
+            deviceStatus_->setText(I18n::text(status));
             qInfo() << status;
           });
   connect(&device_, &DeviceConnection::connectedChanged, this, [this](bool connected) {
@@ -146,25 +145,33 @@ MainWindow::MainWindow(QWidget *parent)
   connect(&device_, &DeviceConnection::packUploaded, this,
           [this](bool success, const QString &message) {
             qInfo() << message;
-            statusBar()->showMessage(message, 5000);
-            if (!success) QMessageBox::warning(this, windowTitle(), message);
+            statusBar()->showMessage(I18n::text(message), 5000);
+            if (!success)
+              QMessageBox::warning(this, windowTitle(), I18n::text(message));
           });
   connect(&device_, &DeviceConnection::buttonEvent, &actions_, &ActionExecutor::execute);
   connect(&actions_, &ActionExecutor::actionFailed, this,
-          [this](const QString &message) { tray_->showMessage(windowTitle(), message); });
+          [this](const QString &message) {
+            tray_->showMessage(windowTitle(), I18n::text(message));
+          });
   connect(&actions_, &ActionExecutor::actionCompleted, this,
-          [this](const QString &message) { statusBar()->showMessage(message, 3000); });
-  connect(&updater_, &FirmwareUpdater::statusChanged, deviceStatus_, &QLabel::setText);
+          [this](const QString &message) {
+            statusBar()->showMessage(I18n::text(message), 3000);
+          });
+  connect(&updater_, &FirmwareUpdater::statusChanged, this,
+          [this](const QString &message) {
+            deviceStatus_->setText(I18n::text(message));
+          });
   connect(&updater_, &FirmwareUpdater::progressChanged, progress_, &QProgressBar::setValue);
   connect(&updater_, &FirmwareUpdater::finished, this,
           [this](bool success, const QString &message) {
-            QMessageBox::information(this, windowTitle(), message);
+            QMessageBox::information(this, windowTitle(), I18n::text(message));
             if (success) QTimer::singleShot(1500, this, &MainWindow::uploadProject);
           });
   connect(&project_, &ProjectModel::modifiedChanged, this, [this](bool modified) {
     setWindowModified(modified);
   });
-  presentMonStatus_->setText(telemetry_.presentMonStatus());
+  presentMonStatus_->setText(I18n::text(telemetry_.presentMonStatus()));
   QString startupProject;
   const QStringList arguments = QCoreApplication::arguments();
   for (const QString &argument : arguments) {
@@ -183,9 +190,9 @@ MainWindow::MainWindow(QWidget *parent)
     QString error;
     if (project_.load(startupProject, &error)) {
       rememberProjectPath(project_.filePath());
-      statusBar()->showMessage(
+      statusBar()->showMessage(I18n::text(
           QStringLiteral("Открыт последний проект: %1")
-              .arg(QFileInfo(project_.filePath()).fileName()),
+              .arg(QFileInfo(project_.filePath()).fileName())),
           5000);
     } else {
       qWarning() << "Unable to restore project" << startupProject << error;
@@ -205,18 +212,18 @@ MainWindow::~MainWindow() {
 
 void MainWindow::createMenus() {
   QMenu *file = menuBar()->addMenu(QStringLiteral("&Файл"));
-  file->addAction(QStringLiteral("Новый"), this, [this] {
+  file->addAction(QStringLiteral("Новый"), QKeySequence::New, this, [this] {
     if (confirmDiscard()) {
       project_.resetToDefault();
       refreshScreens();
     }
-  }, QKeySequence::New);
-  file->addAction(QStringLiteral("Открыть…"), this, &MainWindow::openProject,
-                  QKeySequence::Open);
-  file->addAction(QStringLiteral("Сохранить"), this,
-                  [this] { saveProject(false); }, QKeySequence::Save);
-  file->addAction(QStringLiteral("Сохранить как…"), this,
-                  [this] { saveProject(true); }, QKeySequence::SaveAs);
+  });
+  file->addAction(QStringLiteral("Открыть…"), QKeySequence::Open, this,
+                  &MainWindow::openProject);
+  file->addAction(QStringLiteral("Сохранить"), QKeySequence::Save, this,
+                  [this] { saveProject(false); });
+  file->addAction(QStringLiteral("Сохранить как…"), QKeySequence::SaveAs,
+                  this, [this] { saveProject(true); });
   file->addSeparator();
   file->addAction(QStringLiteral("Выход"), this, [this] {
     quitting_ = true;
@@ -227,10 +234,43 @@ void MainWindow::createMenus() {
   });
   QMenu *view = menuBar()->addMenu(QStringLiteral("&Вид"));
   QMenu *themes = view->addMenu(QStringLiteral("Тема интерфейса"));
-  for (const QString &theme : {"Dark", "Light", "Forest"})
-    themes->addAction(theme, this, [theme] {
+  QSettings uiSettings(portableSettingsPath(), QSettings::IniFormat);
+  const QString selectedTheme = uiSettings.value(QStringLiteral("ui/theme"),
+                                                   QStringLiteral("Dark")).toString();
+  QActionGroup *themeGroup = new QActionGroup(themes);
+  for (const QString &theme : {"Dark", "Light", "Forest"}) {
+    QAction *action = themes->addAction(theme, this, [theme] {
       XpTheme::apply(*qobject_cast<QApplication *>(qApp), theme);
+      QSettings settings(portableSettingsPath(), QSettings::IniFormat);
+      settings.setValue(QStringLiteral("ui/theme"), theme);
+      settings.sync();
     });
+    action->setCheckable(true);
+    action->setChecked(theme.compare(selectedTheme, Qt::CaseInsensitive) == 0);
+    themeGroup->addAction(action);
+  }
+  QMenu *languages = view->addMenu(QStringLiteral("Язык интерфейса"));
+  QActionGroup *languageGroup = new QActionGroup(languages);
+  auto addLanguage = [this, languages, languageGroup](const QString &title,
+                                                       const QString &code) {
+    QAction *action = languages->addAction(title);
+    action->setCheckable(true);
+    action->setChecked(I18n::language() == code);
+    languageGroup->addAction(action);
+    connect(action, &QAction::triggered, this,
+            [this, action, languageGroup, code] {
+      if (I18n::language() == code) return;
+      if (!confirmDiscard()) {
+        for (QAction *candidate : languageGroup->actions())
+          candidate->setChecked(candidate != action);
+        return;
+      }
+      I18n::setLanguage(code);
+      emit restartRequested();
+    });
+  };
+  addLanguage(QStringLiteral("Русский"), QStringLiteral("ru"));
+  addLanguage(QStringLiteral("English"), QStringLiteral("en"));
   QAction *autostart = view->addAction(QStringLiteral("Запускать вместе с Windows"));
   autostart->setCheckable(true);
   QSettings startup("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
@@ -401,6 +441,16 @@ QWidget *MainWindow::createScreensTab() {
   QCheckBox *pixelPreview = new QCheckBox(QStringLiteral("Точный пиксельный preview"));
   pixelPreview->setChecked(true);
   leftLayout->addWidget(pixelPreview);
+  burnInProtection_ = new QCheckBox(QStringLiteral("Защита OLED от выгорания"));
+  burnInProtection_->setToolTip(QStringLiteral(
+      "Оставляет безопасный край и каждые 2 минуты сдвигает изображение на 1 пиксель по часовой стрелке."));
+  pixelShiftInset_ = new QSpinBox;
+  pixelShiftInset_->setRange(1, 4);
+  pixelShiftInset_->setSuffix(QStringLiteral(" px отступ"));
+  pixelShiftInset_->setToolTip(QStringLiteral(
+      "Ширина безопасного края и максимальное отклонение pixel shift."));
+  leftLayout->addWidget(burnInProtection_);
+  leftLayout->addWidget(pixelShiftInset_);
   canvas_ = new DesignCanvas;
   canvas_->setProject(&project_);
 
@@ -571,6 +621,15 @@ QWidget *MainWindow::createScreensTab() {
           &MainWindow::removeSelectedWidget);
   connect(pixelPreview, &QCheckBox::toggled, canvas_,
           &DesignCanvas::setPixelPerfect);
+  connect(burnInProtection_, &QCheckBox::toggled, this, [this](bool enabled) {
+    project_.setBurnInProtection(enabled);
+    pixelShiftInset_->setVisible(enabled);
+    canvas_->update();
+  });
+  connect(pixelShiftInset_, &QSpinBox::valueChanged, this, [this](int pixels) {
+    project_.setPixelShiftInset(pixels);
+    canvas_->update();
+  });
   connect(canvas_, &DesignCanvas::widgetSelected, this, [this](int index) {
     {
       QSignalBlocker blocker(widgetList_);
@@ -958,6 +1017,13 @@ QWidget *MainWindow::createButtonsTab() {
 }
 
 void MainWindow::refreshScreens() {
+  if (burnInProtection_ && pixelShiftInset_) {
+    QSignalBlocker burnBlocker(burnInProtection_);
+    QSignalBlocker insetBlocker(pixelShiftInset_);
+    burnInProtection_->setChecked(project_.burnInProtection());
+    pixelShiftInset_->setValue(project_.pixelShiftInset());
+    pixelShiftInset_->setVisible(project_.burnInProtection());
+  }
   QSignalBlocker blocker(screenList_); screenList_->clear();
   for (const ScreenModel &screen : project_.screens()) {
     QListWidgetItem *item = new QListWidgetItem(screen.name, screenList_);
@@ -978,6 +1044,7 @@ void MainWindow::refreshScreens() {
   refreshProperties(selection);
   canvas_->update();
   updateBindingControls();
+  I18n::translateUi(this);
 }
 
 void MainWindow::refreshWidgetList() {
@@ -1012,6 +1079,7 @@ void MainWindow::refreshWidgetList() {
     }
   }
   widgetList_->setCurrentRow(selected);
+  I18n::translateUi(widgetList_);
 }
 
 void MainWindow::refreshResourceChoices() {
@@ -1049,6 +1117,7 @@ void MainWindow::refreshResourceChoices() {
   }
   const int comboIndex = propertyResource_->findData(current);
   propertyResource_->setCurrentIndex(qMax(0, comboIndex));
+  I18n::translateUi(propertyResource_);
 }
 
 void MainWindow::refreshProperties(int index) {
@@ -1179,6 +1248,7 @@ void MainWindow::refreshResources() {
     resourceList_->setCurrentRow(qBound(0, oldRow,
                                         project_.resources().size() - 1));
   refreshResourceChoices();
+  I18n::translateUi(resourceList_);
 }
 
 void MainWindow::importResource() {
@@ -1264,6 +1334,7 @@ void MainWindow::refreshActions() {
   for (const HostAction &action : project_.actions())
     actionList_->addItem(QStringLiteral("%1 — %2").arg(action.name, actionTypeName(action.type)));
   updateBindingControls();
+  I18n::translateUi(actionList_);
 }
 
 void MainWindow::updateBindingControls() {
@@ -1285,18 +1356,19 @@ void MainWindow::updateBindingControls() {
                                  bindingCode(TM_ACTION_HOST, 0, action.id));
     quint32 current = bindingCode(values[i].type, values[i].target, values[i].hostActionId);
     int index = bindingCombos_[i]->findData(current); bindingCombos_[i]->setCurrentIndex(qMax(0, index));
+    I18n::translateUi(bindingCombos_[i]);
   }
 }
 
 PackCompileResult MainWindow::compileProject(bool showErrors) {
   lastPack_ = PackCompiler::compile(project_);
   if (!lastPack_.ok()) {
-    packStatus_->setText(lastPack_.error);
+    packStatus_->setText(I18n::text(lastPack_.error));
     if (showErrors) QMessageBox::critical(this, windowTitle(), lastPack_.error);
   } else {
-    packStatus_->setText(QStringLiteral("%1 / %2 байт, %3 каналов")
+    packStatus_->setText(I18n::text(QStringLiteral("%1 / %2 байт, %3 каналов")
                              .arg(lastPack_.data.size()).arg(TM_MAX_PACK_SIZE)
-                             .arg(lastPack_.channels.size()));
+                             .arg(lastPack_.channels.size())));
   }
   return lastPack_;
 }
@@ -1307,7 +1379,10 @@ void MainWindow::uploadProject() {
 
 bool MainWindow::confirmDiscard() {
   return !project_.modified() ||
-         QMessageBox::question(this, windowTitle(), "Отбросить несохранённые изменения?") == QMessageBox::Yes;
+         QMessageBox::question(
+             this, windowTitle(),
+             I18n::text(QStringLiteral(
+                 "Отбросить несохранённые изменения?"))) == QMessageBox::Yes;
 }
 void MainWindow::openProject() {
   if (!confirmDiscard()) return;

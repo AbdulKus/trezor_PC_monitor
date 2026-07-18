@@ -8,6 +8,7 @@
 
 #include "projectmodel.h"
 #include "telemetry.h"
+#include "fpsscaler.h"
 
 class QKeyEvent;
 
@@ -39,6 +40,7 @@ class DesignCanvas : public QWidget {
   QHash<QString, double> autoRangeTargets_;
   QHash<QString, double> autoRangeMaximums_;
   QHash<QString, QVector<bool>> autoRangeMarkers_;
+  QHash<QString, FpsScaler> fpsScalers_;
   int selected_ = -1;
   bool dragging_ = false;
   bool pixelPerfect_ = true;

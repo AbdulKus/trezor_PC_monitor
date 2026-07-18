@@ -47,6 +47,8 @@ value:i32
 
 `PACK_BEGIN` establishes an expected size and transaction. `PACK_DATA` is accepted only inside that range. `PACK_COMMIT` validates the completed byte map, package header, all nested bounds and the final checksum before atomically switching the renderer to the new package. The previous layout remains active if validation fails.
 
+Pack header `reserved[0]` uses `TM_PACK_FLAG_PIXEL_SHIFT`; `reserved[1]` stores the 1–4 pixel safe inset. An auto-range FPS sparkline carries `TM_WIDGET_FLAG_FPS_PRESETS`, allowing firmware to use the same discrete hysteresis policy as the PC preview without depending on a channel name.
+
 Canonical constants and structures are defined in [`protocol/protocol.h`](../protocol/protocol.h). Both targets compile the same implementation to reduce drift.
 
 For `TM_WIDGET_SPARKLINE`, `TM_WIDGET_FLAG_AUTO_RANGE` tells firmware to retain raw centi-unit samples and interpolate the visible history between its current minimum and maximum. Without the flag, the widget's compiled fixed range is used. This is a widget flag rather than a new report type, so protocol-v1 transport remains compatible.

@@ -30,6 +30,8 @@ class MainWindow : public QMainWindow {
  public:
   explicit MainWindow(QWidget *parent = nullptr);
   ~MainWindow() override;
+ signals:
+  void restartRequested();
  protected:
   void closeEvent(QCloseEvent *event) override;
  private:
@@ -71,6 +73,8 @@ class MainWindow : public QMainWindow {
   QListWidget *screenList_ = nullptr;
   QListWidget *widgetList_ = nullptr;
   QComboBox *addWidgetType_ = nullptr;
+  QCheckBox *burnInProtection_ = nullptr;
+  QSpinBox *pixelShiftInset_ = nullptr;
   QFormLayout *propertyLayout_ = nullptr;
   QSpinBox *propertyX_ = nullptr;
   QSpinBox *propertyY_ = nullptr;

@@ -15,6 +15,7 @@ Turn a dedicated **Trezor One (T1B1)** into a compact 128×64 OLED system monito
 
 - WYSIWYG 128×64 editor with an exact 1-bit device preview.
 - Sparkline graphs keep zero at the baseline and smoothly adapt their upper bound with headroom and visible scale-change markers.
+- FPS graphs use stable 30/60/90/120/144/165/180/200/240/300/360/480 presets and require about 10 seconds of evidence before switching, so short drops remain visible valleys.
 - Text, images, animated GIFs, bars, segmented gauges, rings, sparklines, icons, lines and threshold warnings.
 - Seven ready-made layouts ranging from compact dashboards to large, readable single-metric pages.
 - CPU, RAM, GPU, VRAM, FPS/frame-time and supported temperature/power metrics.
@@ -22,6 +23,9 @@ Turn a dedicated **Trezor One (T1B1)** into a compact 128×64 OLED system monito
 - Media is resized and converted on the PC to its final 1-bit dimensions. Only media used on enabled pages is uploaded.
 - Short/long button actions, local page switching, shortcuts and commands.
 - Tray operation, reconnect recovery and automatic layout re-upload after power loss.
+- A global single-instance guard prevents two portable copies from fighting over the same HID device.
+- Russian and English UI, remembered together with the selected Dark/Light/Forest theme.
+- Optional OLED burn-in protection reserves a configurable safe border and moves the rendered image clockwise every two minutes.
 - The last opened `.tmon` project is restored automatically on the next launch.
 - Built-in firmware wizard and a standalone firmware build path pinned to a known Trezor upstream revision.
 

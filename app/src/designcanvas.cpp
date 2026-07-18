@@ -32,6 +32,11 @@ double niceAutoMaximum(double peak) {
   const double step = qMax(magnitude / 10.0, 0.000001);
   return qCeil(padded / step) * step;
 }
+
+bool isFpsMetric(const QString &metric) {
+  return metric.contains(QStringLiteral("fps"), Qt::CaseInsensitive);
+}
+
 }  // namespace
 
 DesignCanvas::DesignCanvas(QWidget *parent) : QWidget(parent) {
@@ -68,15 +73,24 @@ void DesignCanvas::setSamples(const QHash<QString, MetricSample> &samples) {
             !updatedMetrics.contains(widget.metric))
           continue;
         const QVector<double> &values = history_[widget.metric];
-        const double peak = values.isEmpty()
-                                ? 0.0
-                                : *std::max_element(values.cbegin(), values.cend());
-        const double target = niceAutoMaximum(qMax(0.0, peak));
         const QString key = autoRangeKey(widget);
-        const double previous = autoRangeTargets_.value(key, target);
-        const bool changed = autoRangeTargets_.contains(key) &&
-                             !qFuzzyCompare(previous + 1.0, target + 1.0);
-        autoRangeTargets_[key] = target;
+        bool changed = false;
+        if (isFpsMetric(widget.metric)) {
+          const double value = qMax(0.0, samples.value(widget.metric).value);
+          const qint64 now = animationClock_.elapsed();
+          FpsScaler &scaler = fpsScalers_[key];
+          changed = scaler.update(value, now);
+          autoRangeTargets_[key] = scaler.maximum();
+        } else {
+          const double peak = values.isEmpty()
+                                  ? 0.0
+                                  : *std::max_element(values.cbegin(), values.cend());
+          const double target = niceAutoMaximum(qMax(0.0, peak));
+          const double previous = autoRangeTargets_.value(key, target);
+          changed = autoRangeTargets_.contains(key) &&
+                    !qFuzzyCompare(previous + 1.0, target + 1.0);
+          autoRangeTargets_[key] = target;
+        }
         QVector<bool> &markers = autoRangeMarkers_[key];
         markers << changed;
         while (markers.size() > values.size()) markers.removeFirst();
@@ -185,10 +199,14 @@ void DesignCanvas::paintWidget(QPainter &p, const WidgetModel &widget) {
         const double target = autoRangeTargets_.value(key,
                                                        niceAutoMaximum(peak));
         double displayed = autoRangeMaximums_.value(key, target);
-        const double factor = target > displayed ? 0.42 : 0.035;
-        displayed += (target - displayed) * factor;
-        if (qAbs(target - displayed) < qMax(0.000001, target * 0.002))
+        if (isFpsMetric(widget.metric)) {
           displayed = target;
+        } else {
+          const double factor = target > displayed ? 0.42 : 0.035;
+          displayed += (target - displayed) * factor;
+          if (qAbs(target - displayed) < qMax(0.000001, target * 0.002))
+            displayed = target;
+        }
         displayed = qMax(0.000001, displayed);
         autoRangeMaximums_[key] = displayed;
         rangeMinimum = 0.0;
@@ -296,6 +314,9 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
   int scale = area.width() / 128;
   const bool hasScreen = project_ &&
                          project_->currentScreen() < project_->screens().size();
+  const int safeInset = project_ && project_->burnInProtection()
+                            ? project_->pixelShiftInset()
+                            : 0;
   if (pixelPerfect_) {
     QImage oled(128, 64, QImage::Format_ARGB32);
     oled.fill(Qt::black);
@@ -303,6 +324,10 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
     devicePainter.setRenderHint(QPainter::Antialiasing, false);
     devicePainter.setRenderHint(QPainter::TextAntialiasing, false);
     devicePainter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    if (safeInset > 0)
+      devicePainter.setClipRect(QRect(safeInset, safeInset,
+                                      128 - safeInset * 2,
+                                      64 - safeInset * 2));
     if (hasScreen) {
       const auto &widgets = project_->screens()[project_->currentScreen()].widgets;
       for (const WidgetModel &widget : widgets) paintWidget(devicePainter, widget);
@@ -316,6 +341,10 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
     painter.scale(scale, scale);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
+    if (safeInset > 0)
+      painter.setClipRect(QRect(safeInset, safeInset,
+                                128 - safeInset * 2,
+                                64 - safeInset * 2));
     if (hasScreen) {
       const auto &widgets = project_->screens()[project_->currentScreen()].widgets;
       for (const WidgetModel &widget : widgets) paintWidget(painter, widget);
@@ -344,12 +373,27 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
       painter.drawLine(area.x(), area.y() + y * scale,
                        area.right(), area.y() + y * scale);
   }
+  if (safeInset > 0) {
+    const QRect safe(area.x() + safeInset * scale,
+                     area.y() + safeInset * scale,
+                     (128 - safeInset * 2) * scale,
+                     (64 - safeInset * 2) * scale);
+    QPen safePen(QColor("#f59e0b"), 1);
+    safePen.setStyle(Qt::DashLine);
+    painter.setPen(safePen);
+    painter.drawRect(safe.adjusted(0, 0, -1, -1));
+  }
   painter.setPen(QPen(QColor("#475569"), 2));
   painter.drawRect(area.adjusted(-1, -1, 0, 0));
   painter.setPen(QColor("#cbd5e1"));
   painter.drawText(area.x(), area.y() - 8,
-                   pixelPerfect_ ? "128 × 64 · PIXEL PREVIEW"
-                                 : "128 × 64 · SMOOTH PREVIEW");
+                   safeInset > 0
+                       ? QStringLiteral("128 × 64 · SAFE %1 × %2 · SHIFT ±%3 px")
+                             .arg(128 - safeInset * 2)
+                             .arg(64 - safeInset * 2)
+                             .arg(safeInset)
+                       : pixelPerfect_ ? "128 × 64 · PIXEL PREVIEW"
+                                       : "128 × 64 · SMOOTH PREVIEW");
 }
 
 void DesignCanvas::keyPressEvent(QKeyEvent *event) {

@@ -41,16 +41,31 @@ void ProjectModel::setModified(bool modified) {
   if (modified) emit changed();
 }
 
+void ProjectModel::setBurnInProtection(bool enabled) {
+  if (burnInProtection_ == enabled) return;
+  burnInProtection_ = enabled;
+  setModified();
+}
+
+void ProjectModel::setPixelShiftInset(int pixels) {
+  pixels = qBound(1, pixels, 4);
+  if (pixelShiftInset_ == pixels) return;
+  pixelShiftInset_ = pixels;
+  setModified();
+}
+
 void ProjectModel::resetToDefault() {
   screens_.clear();
   resources_.clear();
   actions_.clear();
+  burnInProtection_ = false;
+  pixelShiftInset_ = 1;
 
   // Compact layout contributed by the user as "Screen 8". It deliberately
   // starts the default project: the most useful values are readable at a
   // glance while the narrow centre columns retain RAM/VRAM context.
   ScreenModel screen8;
-  screen8.name = QStringLiteral("Экран 8");
+  screen8.name = QStringLiteral("Основной");
   auto dashboardText = [&](int x, int y, int width, int height,
                            const QString &text, const QString &metric) {
     WidgetModel widget;
@@ -71,7 +86,7 @@ void ProjectModel::resetToDefault() {
                 QStringLiteral("gpu.active.load"));
   dashboardText(76, 30, 48, 12, QStringLiteral("t:{v}"),
                 QStringLiteral("gpu.active.temperature"));
-  dashboardText(3, 50, 48, 14, QStringLiteral("FPS: {v}"),
+  dashboardText(2, 50, 48, 14, QStringLiteral("FPS:{v}"),
                 QStringLiteral("foreground.fps.displayed"));
 
   auto dashboardGraph = [&](int x, int y, int width, int height,
@@ -86,7 +101,7 @@ void ProjectModel::resetToDefault() {
     widget.autoRange = autoRange;
     screen8.widgets << widget;
   };
-  dashboardGraph(66, 43, 60, 19,
+  dashboardGraph(59, 45, 67, 17,
                  QStringLiteral("foreground.fps.displayed"), 240, true);
   dashboardGraph(2, 13, 49, 16, QStringLiteral("cpu.total.load"), 100);
   dashboardGraph(77, 13, 49, 16, QStringLiteral("gpu.active.load"), 100);
@@ -333,7 +348,10 @@ void ProjectModel::resetToDefault() {
 }
 
 QJsonObject ProjectModel::toJson() const {
-  QJsonObject root{{"format", "trezor-pc-monitor"}, {"version", 3}};
+  QJsonObject root{{"format", "trezor-pc-monitor"},
+                   {"version", 4},
+                   {"burnInProtection", burnInProtection_},
+                   {"pixelShiftInset", pixelShiftInset_}};
   QJsonArray screens;
   for (const ScreenModel &screen : screens_) {
     QJsonArray widgets;
@@ -400,7 +418,7 @@ QJsonObject ProjectModel::toJson() const {
 bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   const int version = root.value("version").toInt();
   if (root.value("format") != "trezor-pc-monitor" ||
-      (version < 1 || version > 3)) {
+      (version < 1 || version > 4)) {
     if (error) *error = QStringLiteral("Неподдерживаемый формат проекта");
     return false;
   }
@@ -475,6 +493,8 @@ bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   screens_ = newScreens;
   resources_ = newResources;
   actions_ = newActions;
+  burnInProtection_ = root.value("burnInProtection").toBool(false);
+  pixelShiftInset_ = qBound(1, root.value("pixelShiftInset").toInt(1), 4);
   currentScreen_ = 0;
   return true;
 }

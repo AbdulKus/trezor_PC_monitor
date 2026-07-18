@@ -21,6 +21,10 @@ extern "C" {
 
 #define TM_WIDGET_FLAG_INVERTED 0x01u
 #define TM_WIDGET_FLAG_AUTO_RANGE 0x02u
+#define TM_WIDGET_FLAG_FPS_PRESETS 0x04u
+
+#define TM_PACK_FLAG_PIXEL_SHIFT 0x01u
+#define TM_PIXEL_SHIFT_INTERVAL_MS 120000u
 
 #if defined(_MSC_VER)
 #pragma pack(push, 1)

@@ -3,12 +3,17 @@
 #include <QDir>
 #include <QFile>
 #include <QIcon>
+#include <QLockFile>
+#include <QMessageBox>
+#include <QProcess>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTabWidget>
 #include <QTimer>
 
 #include "mainwindow.h"
+#include "i18n.h"
 #include "xptheme.h"
 
 namespace {
@@ -31,7 +36,11 @@ int main(int argc, char *argv[]) {
   application.setWindowIcon(QIcon(QStringLiteral(":/icons/pcmonitor.svg")));
   application.setQuitOnLastWindowClosed(false);
   qInstallMessageHandler(logMessage);
-  XpTheme::apply(application, "Dark");
+  I18n::initialize(application);
+  QSettings settings(I18n::settingsPath(), QSettings::IniFormat);
+  XpTheme::apply(application,
+                 settings.value(QStringLiteral("ui/theme"),
+                                QStringLiteral("Dark")).toString());
 
   const QStringList arguments = application.arguments();
   const int validateIndex = arguments.indexOf(QStringLiteral("--validate-firmware"));
@@ -109,7 +118,27 @@ int main(int argc, char *argv[]) {
     return result;
   }
 
+  QLockFile instanceLock(QStandardPaths::writableLocation(
+                             QStandardPaths::TempLocation) +
+                         QStringLiteral("/trezor-pc-monitor-ui.lock"));
+  instanceLock.setStaleLockTime(0);
+  if (!instanceLock.tryLock(100)) {
+    QMessageBox::warning(
+        nullptr, QStringLiteral("Trezor PC Monitor"),
+        I18n::text(QStringLiteral(
+            "Программа уже запущена. Закройте существующее окно или используйте меню в трее.")));
+    return 1;
+  }
+
   MainWindow window;
+  QObject::connect(&window, &MainWindow::restartRequested, &application,
+                   [&application, &instanceLock] {
+    QStringList arguments = application.arguments();
+    if (!arguments.isEmpty()) arguments.removeFirst();
+    instanceLock.unlock();
+    QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments);
+    application.quit();
+  });
   const int screenshotIndex = arguments.indexOf(QStringLiteral("--screenshot-ui"));
   if (screenshotIndex >= 0) {
     if (screenshotIndex + 1 >= arguments.size()) return 2;
