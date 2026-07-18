@@ -495,6 +495,7 @@ QWidget *MainWindow::createScreensTab() {
   connect(widgetList_, &QListWidget::currentRowChanged, this, [this](int row) {
     canvas_->setSelectedWidget(row);
     refreshProperties(row);
+    if (row >= 0) canvas_->setFocus(Qt::OtherFocusReason);
   });
   connect(addScreen, &QPushButton::clicked, this, [this] {
     if (project_.screens().size() >= int(TM_MAX_SCREENS)) return;
