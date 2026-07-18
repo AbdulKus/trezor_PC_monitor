@@ -167,50 +167,6 @@ static void append_text(char *output, uint32_t capacity, uint32_t *length,
   while (*value != 0) append_char(output, capacity, length, *value++);
 }
 
-static void format_number(const tm_metric_entry_t *metric, uint8_t precision,
-                          char output[32]) {
-  if (metric == NULL ||
-      (metric->status & (TM_STATUS_UNAVAILABLE | TM_STATUS_STALE)) != 0) {
-    memcpy(output, "--", 3);
-    return;
-  }
-  int64_t value = metric->value;
-  bool negative = value < 0;
-  if (negative) value = -value;
-  int decimals = metric->scale_exponent < 0 ? -metric->scale_exponent : 0;
-  if (decimals > 6) decimals = 6;
-  if (precision < decimals) decimals = precision;
-  for (int i = 0; i < metric->scale_exponent; i++) value *= 10;
-  int64_t divisor = 1;
-  int source_decimals = metric->scale_exponent < 0 ? -metric->scale_exponent : 0;
-  for (int i = 0; i < source_decimals; i++) divisor *= 10;
-  int64_t integer = value / divisor;
-  int64_t fraction = value % divisor;
-  while (source_decimals > decimals) {
-    fraction /= 10;
-    source_decimals--;
-  }
-  char reverse[20];
-  int reverse_len = 0;
-  do {
-    reverse[reverse_len++] = (char)('0' + integer % 10);
-    integer /= 10;
-  } while (integer != 0 && reverse_len < (int)sizeof(reverse));
-  uint32_t length = 0;
-  if (negative) output[length++] = '-';
-  while (reverse_len > 0) output[length++] = reverse[--reverse_len];
-  if (decimals > 0) {
-    output[length++] = '.';
-    int64_t place = 1;
-    for (int i = 1; i < decimals; i++) place *= 10;
-    for (int i = 0; i < decimals; i++) {
-      output[length++] = (char)('0' + (fraction / place) % 10);
-      place /= 10;
-    }
-  }
-  output[length] = 0;
-}
-
 static void format_template(const char *format, const char *value,
                             char output[48]) {
   uint32_t length = 0;
@@ -485,8 +441,8 @@ static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
     case TM_WIDGET_DYNAMIC_TEXT: {
       char value[32];
       char formatted[48];
-      format_number(monitor_metric(widget->channel_id), widget->precision,
-                    value);
+      tm_format_metric(monitor_metric(widget->channel_id), widget->precision,
+                       value);
       format_template(pack_string(widget->resource_offset), value, formatted);
       draw_text(x1, y1, formatted, widget->font_id);
       break;

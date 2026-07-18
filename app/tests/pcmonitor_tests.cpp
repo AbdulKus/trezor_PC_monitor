@@ -242,6 +242,30 @@ void PcMonitorTests::protocolLayoutAndCrc() {
   QCOMPARE(tm_crc32(reinterpret_cast<const uint8_t *>(known.constData()),
                     quint32(known.size())),
            quint32(0xcbf43926));
+
+  tm_metric_entry_t metric{};
+  metric.status = TM_STATUS_VALID;
+  metric.scale_exponent = -2;
+  char formatted[32];
+  metric.value = 6460;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65"));
+  metric.value = 6449;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("64"));
+  metric.value = -6460;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("-65"));
+  metric.value = 6499;
+  tm_format_metric(&metric, 1, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65.0"));
+  metric.scale_exponent = 0;
+  metric.value = 65;
+  tm_format_metric(&metric, 2, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65.00"));
+  metric.status = TM_STATUS_STALE;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("--"));
 }
 
 void PcMonitorTests::zipRoundTripAndRejectsTruncation() {

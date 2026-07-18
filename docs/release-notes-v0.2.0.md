@@ -11,6 +11,7 @@ This update focuses on everyday editor reliability and graph usability.
 - Russian/English language and Dark/Light/Forest theme selections are persisted.
 - Optional burn-in protection adds a project-level safe border and clockwise two-minute firmware pixel shift.
 - The first default screen is the exact attached `Экран 8` layout, renamed to `Основной`.
+- Device text now uses the same fixed-point rounding as the desktop preview, removing frequent one-degree and one-FPS differences.
 - The application restores the last opened project from portable settings.
 - PC shortcuts have inline instructions, a test button and reconnect-safe event sequencing.
 - A proper icon is embedded in the Windows executable and shared by the window and tray.

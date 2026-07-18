@@ -235,6 +235,8 @@ typedef struct TM_PACKED {
 #endif
 
 uint32_t tm_crc32(const uint8_t *data, uint32_t size);
+void tm_format_metric(const tm_metric_entry_t *metric, uint8_t precision,
+                      char output[32]);
 
 #ifdef __cplusplus
 }

@@ -10,6 +10,7 @@ extern "C" {
 
 #include <QDateTime>
 #include <QMutexLocker>
+#include <QtMath>
 
 #include <cstring>
 
@@ -137,10 +138,12 @@ tm_metric_entry_t metricEntry(quint16 channel, const MetricSample &sample) {
   if (sample.unit == "%" || sample.unit == "C" || sample.unit == "W" ||
       sample.unit.isEmpty()) {
     entry.scale_exponent = -2;
-    entry.value = qint32(qBound(-21474836.0, sample.value, 21474836.0) * 100.0);
+    entry.value = qint32(qRound64(
+        qBound(-21474836.0, sample.value, 21474836.0) * 100.0));
   } else {
     entry.scale_exponent = 0;
-    entry.value = qint32(qBound(-2147483647.0, sample.value, 2147483647.0));
+    entry.value = qint32(qRound64(
+        qBound(-2147483647.0, sample.value, 2147483647.0)));
   }
   return entry;
 }
