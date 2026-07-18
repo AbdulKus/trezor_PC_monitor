@@ -11,6 +11,8 @@ if [[ ! -d "$UPSTREAM/.git" ]]; then
 fi
 git -C "$UPSTREAM" fetch --depth=1 origin "$REF"
 git -C "$UPSTREAM" checkout --detach FETCH_HEAD
+git -C "$UPSTREAM" submodule update --init --depth=1 \
+  vendor/libopencm3 vendor/nanopb vendor/ts-tvl
 
 mkdir -p "$UPSTREAM/common/pcmonitor" "$UPSTREAM/legacy/pcmonitor"
 cp "$ROOT/protocol/protocol.h" "$ROOT/protocol/protocol.c" \
