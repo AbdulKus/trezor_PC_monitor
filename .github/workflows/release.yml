@@ -101,7 +101,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Trezor-PC-Monitor-${{ github.ref_name }}-win64
+          name: Trezor-PC-Monitor-win64-${{ github.run_id }}
           path: |
             artifacts/*.zip
             artifacts/*.bin
