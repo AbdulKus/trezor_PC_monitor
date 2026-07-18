@@ -50,6 +50,7 @@ if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(pcmonitor_tests
       app/tests/pcmonitor_tests.cpp
+      app/src/designcanvas.cpp
       app/src/resourcepreview.cpp
       app/tests/firmware_stubs.c
       firmware/monitor.c

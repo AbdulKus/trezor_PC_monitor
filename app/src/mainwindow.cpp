@@ -356,6 +356,8 @@ QWidget *MainWindow::createScreensTab() {
   QHBoxLayout *layout = new QHBoxLayout(page);
   QSplitter *splitter = new QSplitter;
   QWidget *left = new QWidget;
+  left->setMinimumWidth(245);
+  left->setMaximumWidth(265);
   QVBoxLayout *leftLayout = new QVBoxLayout(left);
   screenList_ = new QListWidget;
   leftLayout->addWidget(new QLabel(QStringLiteral("Экраны")));
@@ -403,6 +405,8 @@ QWidget *MainWindow::createScreensTab() {
   canvas_->setProject(&project_);
 
   QGroupBox *properties = new QGroupBox(QStringLiteral("Свойства элемента"));
+  properties->setMinimumWidth(285);
+  properties->setMaximumWidth(305);
   propertyLayout_ = new QFormLayout(properties);
   propertyX_ = new QSpinBox; propertyX_->setRange(0, 127);
   propertyY_ = new QSpinBox; propertyY_->setRange(0, 63);
@@ -427,9 +431,9 @@ QWidget *MainWindow::createScreensTab() {
   propertyMax_ = new QSpinBox; propertyMax_->setRange(-100000000, 100000000);
   propertyArg0_ = new QSpinBox; propertyArg0_->setRange(1, 32);
   propertyAutoRange_ = new QCheckBox(
-      QStringLiteral("Автомасштаб по видимой истории"));
+      QStringLiteral("Автомасштаб максимума"));
   propertyAutoRange_->setToolTip(QStringLiteral(
-      "График сам растягивает минимум и максимум последних значений на всю высоту."));
+      "Ноль остаётся снизу, а верхняя граница плавно следует за значениями с запасом."));
   suggestRange_ = new QPushButton(QStringLiteral("Подобрать по датчику"));
   propertyRangeHelp_ = new QLabel;
   propertyRangeHelp_->setWordWrap(true);
@@ -450,7 +454,9 @@ QWidget *MainWindow::createScreensTab() {
   propertyLayout_->addRow(QString(), suggestRange_);
   propertyLayout_->addRow(propertyRangeHelp_);
   splitter->addWidget(left); splitter->addWidget(canvas_); splitter->addWidget(properties);
+  splitter->setChildrenCollapsible(false);
   splitter->setStretchFactor(1, 1);
+  splitter->setSizes({255, 590, 295});
   layout->addWidget(splitter);
 
   connect(screenList_, &QListWidget::currentRowChanged, this, [this](int row) {
@@ -1119,16 +1125,12 @@ void MainWindow::refreshProperties(int index) {
   showRow(propertyArg0_, widget.type == TM_WIDGET_SEGMENTS);
   showRow(propertyAutoRange_, widget.type == TM_WIDGET_SPARKLINE);
   showRow(suggestRange_, range && !widget.autoRange);
-  showRow(propertyRangeHelp_, range);
+  showRow(propertyRangeHelp_, range && !widget.autoRange);
   const MetricSample sample = telemetry_.samples().value(widget.metric);
-  propertyRangeHelp_->setText(widget.autoRange
-      ? QStringLiteral(
-            "Минимум и максимум вычисляются по видимой истории графика. "
-            "При изменении FPS линия автоматически занимает доступную высоту.")
-      : QStringLiteral(
-            "Диапазон — в обычных единицах датчика%1. Для memory.ram.load используйте 0–100; "
-            "для memory.ram.used кнопка подставит полный объём RAM.")
-            .arg(sample.valid ? QStringLiteral(" (%1)").arg(sample.unit) : QString()));
+  propertyRangeHelp_->setText(QStringLiteral(
+      "Диапазон — в обычных единицах датчика%1. Для memory.ram.load используйте 0–100; "
+      "для memory.ram.used кнопка подставит полный объём RAM.")
+      .arg(sample.valid ? QStringLiteral(" (%1)").arg(sample.unit) : QString()));
 }
 
 void MainWindow::addWidget() {

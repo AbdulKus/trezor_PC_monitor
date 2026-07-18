@@ -312,7 +312,7 @@ bool monitor_handle_packet(const uint8_t input[TM_PACKET_SIZE]) {
       pack_ready = true;
       current_page = 0;
       system_visible = false;
-      renderer_invalidate();
+      renderer_init();
       ack(packet->sequence, TM_ERROR_NONE, pack_received);
       break;
     }

@@ -4,6 +4,7 @@ param(
     [string]$QtDir = $env:QT_ROOT_DIR,
     [string]$FirmwareDir = "firmware/prebuilt",
     [string]$PresentMonInstaller = "",
+    [string]$PresentMonDll = "",
     [string]$LibUsbDll = ""
 )
 
@@ -45,6 +46,11 @@ if (-not [string]::IsNullOrWhiteSpace($PresentMonInstaller) -and
     $setup = Join-Path $outputPath "setup"
     New-Item -ItemType Directory -Force -Path $setup | Out-Null
     Copy-Item -LiteralPath $PresentMonInstaller -Destination $setup -Force
+}
+if (-not [string]::IsNullOrWhiteSpace($PresentMonDll) -and
+    (Test-Path -LiteralPath $PresentMonDll)) {
+    Copy-Item -LiteralPath $PresentMonDll `
+        -Destination (Join-Path $outputPath "PresentMonAPI2Loader.dll") -Force
 }
 if (-not [string]::IsNullOrWhiteSpace($LibUsbDll) -and
     (Test-Path -LiteralPath $LibUsbDll)) {

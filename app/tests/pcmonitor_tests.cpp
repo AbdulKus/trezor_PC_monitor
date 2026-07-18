@@ -1,11 +1,13 @@
 #include <QtTest>
 
 #include <QFile>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 #include <cstring>
 
 #include "packcompiler.h"
+#include "designcanvas.h"
 #include "protocol.h"
 #include "projectmodel.h"
 #include "zipstore.h"
@@ -50,9 +52,37 @@ class PcMonitorTests : public QObject {
   void oneBitConversionRespondsImmediately();
   void animatedGifImportsEveryFrame();
   void livePreviewRendersAndAnimates();
+  void selectedWidgetMovesOnePixelWithArrowKeys();
   void packIsDeterministicAndChecksLimits();
   void firmwareParserTransactionsButtonsAndFuzz();
 };
+
+void PcMonitorTests::selectedWidgetMovesOnePixelWithArrowKeys() {
+  ProjectModel project;
+  project.screens().first().widgets.clear();
+  WidgetModel widget;
+  widget.id = QStringLiteral("keyboard-nudge");
+  widget.geometry = QRect(10, 10, 20, 8);
+  project.screens().first().widgets << widget;
+
+  DesignCanvas canvas;
+  canvas.setProject(&project);
+  canvas.setSelectedWidget(0);
+  QSignalSpy moved(&canvas, &DesignCanvas::widgetGeometryChanged);
+
+  QTest::keyClick(&canvas, Qt::Key_Right);
+  QTest::keyClick(&canvas, Qt::Key_Down);
+  QCOMPARE(project.screens().first().widgets.first().geometry.topLeft(),
+           QPoint(11, 11));
+  QCOMPARE(moved.count(), 2);
+
+  project.screens().first().widgets.first().geometry.moveTopLeft(QPoint(0, 0));
+  QTest::keyClick(&canvas, Qt::Key_Left);
+  QTest::keyClick(&canvas, Qt::Key_Up);
+  QCOMPARE(project.screens().first().widgets.first().geometry.topLeft(),
+           QPoint(0, 0));
+  QCOMPARE(moved.count(), 2);
+}
 
 void PcMonitorTests::livePreviewRendersAndAnimates() {
   ResourceModel resource;

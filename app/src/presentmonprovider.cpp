@@ -1,6 +1,9 @@
 #include "presentmonprovider.h"
 
+#include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
 #include <QStringList>
 
 #include <cstring>
@@ -12,13 +15,35 @@ static T resolve(QLibrary &library, const char *name) {
 }
 
 PresentMonProvider::PresentMonProvider() {
-  const QStringList candidates = {
-      QStringLiteral("PresentMonAPI2Loader"),
-      QStringLiteral("PresentMonAPI2"),
-      QStringLiteral("PresentMonAPI")};
+  QStringList candidates;
+  auto addLoader = [&candidates](const QString &directory) {
+    if (directory.isEmpty()) return;
+    const QString path = QDir(directory).filePath(
+        QStringLiteral("PresentMonAPI2Loader.dll"));
+    if (!candidates.contains(path, Qt::CaseInsensitive)) candidates << path;
+  };
+  addLoader(QCoreApplication::applicationDirPath());
+#ifdef Q_OS_WIN
+  for (const char *variable : {"ProgramW6432", "ProgramFiles"}) {
+    const QString programFiles = qEnvironmentVariable(variable);
+    addLoader(QDir(programFiles).filePath(QStringLiteral("Intel/PresentMon/SDK")));
+    addLoader(QDir(programFiles).filePath(
+        QStringLiteral("Intel/PresentMon/PresentMonApplication")));
+  }
+#endif
+  candidates << QStringLiteral("PresentMonAPI2Loader")
+             << QStringLiteral("PresentMonAPI2")
+             << QStringLiteral("PresentMonAPI");
   for (const QString &candidate : candidates) {
+    if (QFileInfo(candidate).isAbsolute() && !QFileInfo::exists(candidate))
+      continue;
     library_.setFileName(candidate);
-    if (library_.load()) break;
+    if (library_.load()) {
+      qInfo() << "PresentMon loader" << library_.fileName();
+      break;
+    }
+    qInfo() << "PresentMon loader unavailable" << candidate
+            << library_.errorString();
   }
   if (!library_.isLoaded()) {
     status_ = QStringLiteral("PresentMon API не установлен");

@@ -17,6 +17,12 @@ static bool blanked;
 static uint32_t last_render;
 static uint32_t last_activity;
 static uint8_t animation_buffer[FRAME_BYTES];
+static int32_t spark_history[TM_MAX_CHANNELS][16];
+static uint32_t spark_history_time[TM_MAX_CHANNELS];
+static bool spark_history_initialized[TM_MAX_CHANNELS];
+static bool spark_scale_markers[TM_MAX_CHANNELS][16];
+static int32_t spark_auto_targets[TM_MAX_CHANNELS];
+static int32_t spark_auto_maximums[TM_MAX_CHANNELS];
 
 static bool point_visible(int x, int y) {
   return x >= 0 && x < OLED_WIDTH && y >= 0 && y < OLED_HEIGHT;
@@ -236,6 +242,20 @@ static int range_amount(int32_t value, int32_t minimum, int32_t maximum) {
                ((int64_t)maximum - minimum));
 }
 
+// Keep zero at the bottom and round the upper bound to a calm, readable value.
+// The 15% headroom prevents ordinary sample noise from touching the top edge.
+static int32_t spark_nice_maximum(int32_t peak) {
+  if (peak <= 0) return 100;
+  int64_t padded = ((int64_t)peak * 115 + 99) / 100;
+  int64_t magnitude = 1;
+  while (padded >= magnitude * 10 && magnitude <= INT32_MAX / 10)
+    magnitude *= 10;
+  int64_t step = magnitude / 10;
+  if (step < 1) step = 1;
+  int64_t result = ((padded + step - 1) / step) * step;
+  return result > INT32_MAX ? INT32_MAX : (int32_t)result;
+}
+
 static int gauge_amount(const tm_widget_t *widget) {
   bool valid;
   int32_t value = metric_centi_value(widget, &valid);
@@ -448,38 +468,60 @@ static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
     case TM_WIDGET_SPARKLINE: {
       bool valid;
       int32_t value = metric_centi_value(widget, &valid);
-      static int32_t history[TM_MAX_CHANNELS][16];
-      static uint32_t history_time[TM_MAX_CHANNELS];
-      static bool history_initialized[TM_MAX_CHANNELS];
-      if (!history_initialized[widget->channel_id] && valid) {
-        for (int i = 0; i < 16; i++) history[widget->channel_id][i] = value;
-        history_initialized[widget->channel_id] = true;
-        history_time[widget->channel_id] = now_ms;
+      const uint16_t channel = widget->channel_id;
+      if (!spark_history_initialized[channel] && valid) {
+        for (int i = 0; i < 16; i++) spark_history[channel][i] = value;
+        memset(spark_scale_markers[channel], 0,
+               sizeof(spark_scale_markers[channel]));
+        spark_history_initialized[channel] = true;
+        spark_history_time[channel] = now_ms;
+        spark_auto_targets[channel] = spark_nice_maximum(value);
+        spark_auto_maximums[channel] = spark_auto_targets[channel];
       }
-      if (history_initialized[widget->channel_id] && valid &&
-          now_ms - history_time[widget->channel_id] >= 250) {
-        memmove(&history[widget->channel_id][0],
-                &history[widget->channel_id][1], 15 * sizeof(int32_t));
-        history[widget->channel_id][15] = value;
-        history_time[widget->channel_id] = now_ms;
+      if (spark_history_initialized[channel] && valid &&
+          now_ms - spark_history_time[channel] >= 250) {
+        memmove(&spark_history[channel][0], &spark_history[channel][1],
+                15 * sizeof(int32_t));
+        memmove(&spark_scale_markers[channel][0],
+                &spark_scale_markers[channel][1], 15 * sizeof(bool));
+        spark_history[channel][15] = value;
+        int32_t peak = 0;
+        for (int i = 0; i < 16; i++)
+          if (spark_history[channel][i] > peak) peak = spark_history[channel][i];
+        int32_t next_target = spark_nice_maximum(peak);
+        spark_scale_markers[channel][15] =
+            spark_auto_targets[channel] != 0 &&
+            next_target != spark_auto_targets[channel];
+        spark_auto_targets[channel] = next_target;
+        spark_history_time[channel] = now_ms;
       }
-      if (!history_initialized[widget->channel_id]) break;
+      if (!spark_history_initialized[channel]) break;
       int32_t minimum = widget->minimum;
       int32_t maximum = widget->maximum;
       if ((widget->flags & TM_WIDGET_FLAG_AUTO_RANGE) != 0) {
-        minimum = history[widget->channel_id][0];
-        maximum = minimum;
-        for (int i = 1; i < 16; i++) {
-          if (history[widget->channel_id][i] < minimum)
-            minimum = history[widget->channel_id][i];
-          if (history[widget->channel_id][i] > maximum)
-            maximum = history[widget->channel_id][i];
+        minimum = 0;
+        int32_t displayed = spark_auto_maximums[channel];
+        int32_t target = spark_auto_targets[channel];
+        if (displayed < target) {
+          int64_t difference = (int64_t)target - displayed;
+          displayed += (int32_t)((difference + 1) / 2);
+        } else if (displayed > target) {
+          int64_t difference = (int64_t)displayed - target;
+          displayed -= (int32_t)((difference + 31) / 32);
+        }
+        if (displayed < 1) displayed = 1;
+        spark_auto_maximums[channel] = displayed;
+        maximum = displayed;
+        for (int i = 0; i < 16; i++) {
+          if (!spark_scale_markers[channel][i]) continue;
+          int px = x1 + i * (widget->width - 1) / 15;
+          for (int py = y1; py <= y2; py += 3) pixel(px, py, true);
         }
       }
       for (int i = 1; i < 16; i++) {
-        int amount0 = range_amount(history[widget->channel_id][i - 1],
+        int amount0 = range_amount(spark_history[channel][i - 1],
                                    minimum, maximum);
-        int amount1 = range_amount(history[widget->channel_id][i],
+        int amount1 = range_amount(spark_history[channel][i],
                                    minimum, maximum);
         int px0 = x1 + (i - 1) * (widget->width - 1) / 15;
         int px1 = x1 + i * (widget->width - 1) / 15;
@@ -532,6 +574,12 @@ static void render_page(uint32_t now_ms) {
 }
 
 void renderer_init(void) {
+  memset(spark_history, 0, sizeof(spark_history));
+  memset(spark_history_time, 0, sizeof(spark_history_time));
+  memset(spark_history_initialized, 0, sizeof(spark_history_initialized));
+  memset(spark_scale_markers, 0, sizeof(spark_scale_markers));
+  memset(spark_auto_targets, 0, sizeof(spark_auto_targets));
+  memset(spark_auto_maximums, 0, sizeof(spark_auto_maximums));
   dirty = true;
   blanked = false;
   last_render = 0;
