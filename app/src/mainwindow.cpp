@@ -72,11 +72,27 @@ const QStringList kMetrics = {
     "gpu.active.temperature", "gpu.active.power", "gpu.active.frequency",
     "gpu.active.fan", "gpu.active.vram.used", "gpu.active.vram.total",
     "system.power.estimated"};
+
+QString portableSettingsPath() {
+  const QString directory = QCoreApplication::applicationDirPath() +
+                            QStringLiteral("/portable-data");
+  QDir().mkpath(directory);
+  return directory + QStringLiteral("/settings.ini");
+}
+
+void rememberProjectPath(const QString &path) {
+  if (path.isEmpty()) return;
+  QSettings settings(portableSettingsPath(), QSettings::IniFormat);
+  settings.setValue(QStringLiteral("project/lastPath"),
+                    QFileInfo(path).absoluteFilePath());
+  settings.sync();
+}
 }  // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), actions_(&project_, this) {
   setWindowTitle(QStringLiteral("Trezor PC Monitor Studio[*]"));
+  setWindowIcon(QApplication::windowIcon());
   resize(1180, 760);
   createMenus();
   tabs_ = new QTabWidget;
@@ -121,7 +137,10 @@ MainWindow::MainWindow(QWidget *parent)
           });
   connect(&device_, &DeviceConnection::connectedChanged, this, [this](bool connected) {
     deviceConnected_ = connected;
-    if (connected) uploadProject();
+    if (connected) {
+      actions_.resetEventSequence();
+      uploadProject();
+    }
   });
   connect(&device_, &DeviceConnection::uploadProgress, progress_, &QProgressBar::setValue);
   connect(&device_, &DeviceConnection::packUploaded, this,
@@ -133,6 +152,8 @@ MainWindow::MainWindow(QWidget *parent)
   connect(&device_, &DeviceConnection::buttonEvent, &actions_, &ActionExecutor::execute);
   connect(&actions_, &ActionExecutor::actionFailed, this,
           [this](const QString &message) { tray_->showMessage(windowTitle(), message); });
+  connect(&actions_, &ActionExecutor::actionCompleted, this,
+          [this](const QString &message) { statusBar()->showMessage(message, 3000); });
   connect(&updater_, &FirmwareUpdater::statusChanged, deviceStatus_, &QLabel::setText);
   connect(&updater_, &FirmwareUpdater::progressChanged, progress_, &QProgressBar::setValue);
   connect(&updater_, &FirmwareUpdater::finished, this,
@@ -144,6 +165,32 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowModified(modified);
   });
   presentMonStatus_->setText(telemetry_.presentMonStatus());
+  QString startupProject;
+  const QStringList arguments = QCoreApplication::arguments();
+  for (const QString &argument : arguments) {
+    if (argument.endsWith(QStringLiteral(".tmon"), Qt::CaseInsensitive) &&
+        QFileInfo::exists(argument)) {
+      startupProject = argument;
+      break;
+    }
+  }
+  if (startupProject.isEmpty() &&
+      !arguments.contains(QStringLiteral("--no-restore"))) {
+    QSettings settings(portableSettingsPath(), QSettings::IniFormat);
+    startupProject = settings.value(QStringLiteral("project/lastPath")).toString();
+  }
+  if (!startupProject.isEmpty() && QFileInfo::exists(startupProject)) {
+    QString error;
+    if (project_.load(startupProject, &error)) {
+      rememberProjectPath(project_.filePath());
+      statusBar()->showMessage(
+          QStringLiteral("Открыт последний проект: %1")
+              .arg(QFileInfo(project_.filePath()).fileName()),
+          5000);
+    } else {
+      qWarning() << "Unable to restore project" << startupProject << error;
+    }
+  }
   refreshScreens();
   refreshResources();
   refreshActions();
@@ -204,15 +251,7 @@ void MainWindow::createMenus() {
 }
 
 void MainWindow::createTray() {
-  QPixmap pixmap(16, 16);
-  pixmap.fill(Qt::transparent);
-  QPainter painter(&pixmap);
-  painter.setBrush(QColor("#245edb"));
-  painter.drawRoundedRect(0, 1, 15, 13, 2, 2);
-  painter.setPen(Qt::white);
-  painter.drawText(pixmap.rect(), Qt::AlignCenter, "T");
-  painter.end();
-  tray_ = new QSystemTrayIcon(QIcon(pixmap), this);
+  tray_ = new QSystemTrayIcon(QApplication::windowIcon(), this);
   QMenu *menu = new QMenu(this);
   menu->addAction(QStringLiteral("Открыть"), this, [this] {
     showNormal(); activateWindow();
@@ -387,7 +426,11 @@ QWidget *MainWindow::createScreensTab() {
   propertyMin_ = new QSpinBox; propertyMin_->setRange(-100000000, 100000000);
   propertyMax_ = new QSpinBox; propertyMax_->setRange(-100000000, 100000000);
   propertyArg0_ = new QSpinBox; propertyArg0_->setRange(1, 32);
-  autoRange_ = new QPushButton(QStringLiteral("Подобрать по датчику"));
+  propertyAutoRange_ = new QCheckBox(
+      QStringLiteral("Автомасштаб по видимой истории"));
+  propertyAutoRange_->setToolTip(QStringLiteral(
+      "График сам растягивает минимум и максимум последних значений на всю высоту."));
+  suggestRange_ = new QPushButton(QStringLiteral("Подобрать по датчику"));
   propertyRangeHelp_ = new QLabel;
   propertyRangeHelp_->setWordWrap(true);
   propertyRangeHelp_->setStyleSheet(QStringLiteral("color:#94a3b8;font-size:12px;"));
@@ -403,7 +446,8 @@ QWidget *MainWindow::createScreensTab() {
   propertyLayout_->addRow(QStringLiteral("Минимум:"), propertyMin_);
   propertyLayout_->addRow(QStringLiteral("Максимум:"), propertyMax_);
   propertyLayout_->addRow(QStringLiteral("Сегментов:"), propertyArg0_);
-  propertyLayout_->addRow(QString(), autoRange_);
+  propertyLayout_->addRow(QString(), propertyAutoRange_);
+  propertyLayout_->addRow(QString(), suggestRange_);
   propertyLayout_->addRow(propertyRangeHelp_);
   splitter->addWidget(left); splitter->addWidget(canvas_); splitter->addWidget(properties);
   splitter->setStretchFactor(1, 1);
@@ -541,6 +585,7 @@ QWidget *MainWindow::createScreensTab() {
                             propertyH_->value());
     widget.text = propertyText_->text(); widget.metric = propertyMetric_->currentText();
     widget.minimum = propertyMin_->value(); widget.maximum = propertyMax_->value();
+    widget.autoRange = propertyAutoRange_->isChecked();
     widget.resourceIndex = propertyResource_->currentData().toInt();
     widget.arg0 = propertyArg0_->value();
     widget.font.setFamily(propertyFont_->currentText());
@@ -584,6 +629,11 @@ QWidget *MainWindow::createScreensTab() {
           });
   connect(propertyFontSize_, &QSpinBox::valueChanged, this,
           [updateProperty](int) { updateProperty(); });
+  connect(propertyAutoRange_, &QCheckBox::toggled, this,
+          [this, updateProperty](bool) {
+            updateProperty();
+            refreshProperties(canvas_->selectedWidget());
+          });
   connect(propertyMetric_, &QComboBox::currentTextChanged, this,
           [this](const QString &metric) {
             const MetricSample sample = telemetry_.samples().value(metric);
@@ -599,7 +649,7 @@ QWidget *MainWindow::createScreensTab() {
                   " Это процент занятой RAM, поэтому максимум 100. Для объёма выберите memory.ram.used.");
             propertyRangeHelp_->setText(explanation);
           });
-  connect(autoRange_, &QPushButton::clicked, this, [this] {
+  connect(suggestRange_, &QPushButton::clicked, this, [this] {
     const QString metric = propertyMetric_->currentText();
     int maximum = 100;
     if (metric.contains("fps")) maximum = 240;
@@ -852,10 +902,17 @@ QWidget *MainWindow::createButtonsTab() {
   }
   QWidget *actions = new QWidget; QVBoxLayout *actionLayout = new QVBoxLayout(actions);
   actionLayout->addWidget(new QLabel(QStringLiteral("Действия ПК")));
+  QLabel *shortcutHelp = new QLabel(QStringLiteral(
+      "Сочетания записываются как CTRL+C, ALT+F4, SHIFT+F10. "
+      "После создания назначьте действие одной из четырёх кнопок слева."));
+  shortcutHelp->setWordWrap(true);
+  actionLayout->addWidget(shortcutHelp);
   actionList_ = new QListWidget; actionLayout->addWidget(actionList_);
   QPushButton *add = new QPushButton(QStringLiteral("+ Действие"));
+  QPushButton *test = new QPushButton(QStringLiteral("Проверить выбранное"));
   QPushButton *remove = new QPushButton(QStringLiteral("Удалить"));
-  actionLayout->addWidget(add); actionLayout->addWidget(remove);
+  actionLayout->addWidget(add); actionLayout->addWidget(test);
+  actionLayout->addWidget(remove);
   layout->addWidget(bindings); layout->addWidget(actions, 1);
   connect(add, &QPushButton::clicked, this, [this] {
     bool ok = false;
@@ -879,6 +936,14 @@ QWidget *MainWindow::createButtonsTab() {
   connect(remove, &QPushButton::clicked, this, [this] {
     int row = actionList_->currentRow(); if (row < 0) return;
     project_.actions().removeAt(row); project_.setModified(); refreshActions();
+  });
+  connect(test, &QPushButton::clicked, this, [this] {
+    const int row = actionList_->currentRow();
+    if (row < 0 || row >= project_.actions().size()) {
+      statusBar()->showMessage(QStringLiteral("Сначала выберите действие"), 3000);
+      return;
+    }
+    actions_.test(project_.actions()[row].id);
   });
   connect(&project_, &ProjectModel::currentScreenChanged, this,
           [this](int) { updateBindingControls(); });
@@ -989,7 +1054,8 @@ void MainWindow::refreshProperties(int index) {
                                              propertyH_, propertyText_, propertyMetric_,
                                              propertyFont_, propertyFontSize_,
                                              propertyResource_, propertyMin_, propertyMax_,
-                                             propertyArg0_, autoRange_,
+                                             propertyArg0_, propertyAutoRange_,
+                                             suggestRange_,
                                              propertyRangeHelp_}) {
         if (!field) continue;
         field->setVisible(false);
@@ -1003,7 +1069,8 @@ void MainWindow::refreshProperties(int index) {
   QSignalBlocker bx(propertyX_), by(propertyY_), bw(propertyW_), bh(propertyH_),
       bt(propertyText_), bm(propertyMetric_), bf(propertyFont_),
       bfs(propertyFontSize_), br(propertyResource_), bmin(propertyMin_),
-      bmax(propertyMax_), barg(propertyArg0_);
+      bmax(propertyMax_), barg(propertyArg0_),
+      bautorange(propertyAutoRange_);
   propertyX_->setValue(widget.geometry.x()); propertyY_->setValue(widget.geometry.y());
   propertyW_->setValue(widget.geometry.width()); propertyH_->setValue(widget.geometry.height());
   propertyText_->setText(widget.text); propertyMetric_->setCurrentText(widget.metric);
@@ -1013,6 +1080,7 @@ void MainWindow::refreshProperties(int index) {
                                   : qMax(5, widget.font.pixelSize()));
   propertyFontSize_->setEnabled(!PixelFonts::isPixelFont(widget.font.family()));
   propertyMin_->setValue(widget.minimum); propertyMax_->setValue(widget.maximum);
+  propertyAutoRange_->setChecked(widget.autoRange);
   propertyArg0_->setValue(widget.arg0 ? widget.arg0 : 5);
   refreshResourceChoices();
 
@@ -1046,16 +1114,21 @@ void MainWindow::refreshProperties(int index) {
   showRow(propertyFont_, text);
   showRow(propertyFontSize_, text);
   showRow(propertyResource_, resource);
-  showRow(propertyMin_, range);
-  showRow(propertyMax_, range);
+  showRow(propertyMin_, range && !widget.autoRange);
+  showRow(propertyMax_, range && !widget.autoRange);
   showRow(propertyArg0_, widget.type == TM_WIDGET_SEGMENTS);
-  showRow(autoRange_, range);
+  showRow(propertyAutoRange_, widget.type == TM_WIDGET_SPARKLINE);
+  showRow(suggestRange_, range && !widget.autoRange);
   showRow(propertyRangeHelp_, range);
   const MetricSample sample = telemetry_.samples().value(widget.metric);
-  propertyRangeHelp_->setText(QStringLiteral(
-      "Диапазон — в обычных единицах датчика%1. Для memory.ram.load используйте 0–100; "
-      "для memory.ram.used кнопка подставит полный объём RAM.")
-      .arg(sample.valid ? QStringLiteral(" (%1)").arg(sample.unit) : QString()));
+  propertyRangeHelp_->setText(widget.autoRange
+      ? QStringLiteral(
+            "Минимум и максимум вычисляются по видимой истории графика. "
+            "При изменении FPS линия автоматически занимает доступную высоту.")
+      : QStringLiteral(
+            "Диапазон — в обычных единицах датчика%1. Для memory.ram.load используйте 0–100; "
+            "для memory.ram.used кнопка подставит полный объём RAM.")
+            .arg(sample.valid ? QStringLiteral(" (%1)").arg(sample.unit) : QString()));
 }
 
 void MainWindow::addWidget() {
@@ -1238,13 +1311,20 @@ void MainWindow::openProject() {
   QString path = QFileDialog::getOpenFileName(this, "Открыть проект", {}, "Trezor Monitor (*.tmon)");
   if (path.isEmpty()) return; QString error;
   if (!project_.load(path, &error)) QMessageBox::critical(this, windowTitle(), error);
-  else { refreshScreens(); refreshResources(); refreshActions(); }
+  else {
+    rememberProjectPath(project_.filePath());
+    refreshScreens(); refreshResources(); refreshActions();
+  }
 }
 void MainWindow::saveProject(bool saveAs) {
   QString path = project_.filePath();
   if (saveAs || path.isEmpty()) path = QFileDialog::getSaveFileName(this, "Сохранить проект", path, "Trezor Monitor (*.tmon)");
   if (path.isEmpty()) return; if (!path.endsWith(".tmon", Qt::CaseInsensitive)) path += ".tmon";
-  QString error; if (!project_.save(path, &error)) QMessageBox::critical(this, windowTitle(), error);
+  QString error;
+  if (!project_.save(path, &error))
+    QMessageBox::critical(this, windowTitle(), error);
+  else
+    rememberProjectPath(project_.filePath());
 }
 
 void MainWindow::flashFirmware() {

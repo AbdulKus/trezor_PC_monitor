@@ -18,6 +18,7 @@ class QProgressBar;
 class QSpinBox;
 class QLineEdit;
 class QComboBox;
+class QCheckBox;
 class QTableWidget;
 class QSystemTrayIcon;
 class QFormLayout;
@@ -83,7 +84,8 @@ class MainWindow : public QMainWindow {
   QSpinBox *propertyMin_ = nullptr;
   QSpinBox *propertyMax_ = nullptr;
   QSpinBox *propertyArg0_ = nullptr;
-  QPushButton *autoRange_ = nullptr;
+  QCheckBox *propertyAutoRange_ = nullptr;
+  QPushButton *suggestRange_ = nullptr;
   QLabel *propertyRangeHelp_ = nullptr;
   QLabel *deviceStatus_ = nullptr;
   QLabel *packStatus_ = nullptr;

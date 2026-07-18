@@ -102,4 +102,4 @@ jobs:
           gh release create "$env:GITHUB_REF_NAME" `
             artifacts/*.zip artifacts/*.bin artifacts/SHA256SUMS.txt `
             --title "Trezor PC Monitor $env:GITHUB_REF_NAME" `
-            --notes-file docs/release-notes-v0.1.0.md
+            --notes-file "docs/release-notes-$env:GITHUB_REF_NAME.md"

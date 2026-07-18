@@ -14,13 +14,15 @@ Turn a dedicated **Trezor One (T1B1)** into a compact 128×64 OLED system monito
 ## What it does
 
 - WYSIWYG 128×64 editor with an exact 1-bit device preview.
+- Sparkline graphs can automatically fit their visible history without a fixed maximum.
 - Text, images, animated GIFs, bars, segmented gauges, rings, sparklines, icons, lines and threshold warnings.
-- Six ready-made layouts ranging from compact dashboards to large, readable single-metric pages.
+- Seven ready-made layouts ranging from compact dashboards to large, readable single-metric pages.
 - CPU, RAM, GPU, VRAM, FPS/frame-time and supported temperature/power metrics.
 - PresentMon integration for foreground-game FPS; unavailable readings stay `N/A` instead of becoming fake zeroes.
 - Media is resized and converted on the PC to its final 1-bit dimensions. Only media used on enabled pages is uploaded.
 - Short/long button actions, local page switching, shortcuts and commands.
 - Tray operation, reconnect recovery and automatic layout re-upload after power loss.
+- The last opened `.tmon` project is restored automatically on the next launch.
 - Built-in firmware wizard and a standalone firmware build path pinned to a known Trezor upstream revision.
 
 ## Install

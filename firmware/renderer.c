@@ -228,14 +228,19 @@ static int32_t metric_centi_value(const tm_widget_t *widget, bool *valid) {
   return (int32_t)value;
 }
 
+static int range_amount(int32_t value, int32_t minimum, int32_t maximum) {
+  if (maximum <= minimum) return 500;
+  if (value <= minimum) return 0;
+  if (value >= maximum) return 1000;
+  return (int)(((int64_t)value - minimum) * 1000 /
+               ((int64_t)maximum - minimum));
+}
+
 static int gauge_amount(const tm_widget_t *widget) {
   bool valid;
   int32_t value = metric_centi_value(widget, &valid);
   if (!valid || widget->maximum <= widget->minimum) return 0;
-  if (value <= widget->minimum) return 0;
-  if (value >= widget->maximum) return 1000;
-  return (int)(((int64_t)(value - widget->minimum) * 1000) /
-               (widget->maximum - widget->minimum));
+  return range_amount(value, widget->minimum, widget->maximum);
 }
 
 static bool decode_rle(const uint8_t *encoded, uint32_t encoded_size,
@@ -441,28 +446,45 @@ static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
       draw_ring(widget, gauge_amount(widget));
       break;
     case TM_WIDGET_SPARKLINE: {
-      int amount = gauge_amount(widget);
-      static int history[TM_MAX_CHANNELS][16];
+      bool valid;
+      int32_t value = metric_centi_value(widget, &valid);
+      static int32_t history[TM_MAX_CHANNELS][16];
       static uint32_t history_time[TM_MAX_CHANNELS];
       static bool history_initialized[TM_MAX_CHANNELS];
-      if (!history_initialized[widget->channel_id]) {
-        for (int i = 0; i < 16; i++) history[widget->channel_id][i] = amount;
+      if (!history_initialized[widget->channel_id] && valid) {
+        for (int i = 0; i < 16; i++) history[widget->channel_id][i] = value;
         history_initialized[widget->channel_id] = true;
         history_time[widget->channel_id] = now_ms;
       }
-      if (now_ms - history_time[widget->channel_id] >= 250) {
+      if (history_initialized[widget->channel_id] && valid &&
+          now_ms - history_time[widget->channel_id] >= 250) {
         memmove(&history[widget->channel_id][0],
-                &history[widget->channel_id][1], 15 * sizeof(int));
-        history[widget->channel_id][15] = amount;
+                &history[widget->channel_id][1], 15 * sizeof(int32_t));
+        history[widget->channel_id][15] = value;
         history_time[widget->channel_id] = now_ms;
       }
+      if (!history_initialized[widget->channel_id]) break;
+      int32_t minimum = widget->minimum;
+      int32_t maximum = widget->maximum;
+      if ((widget->flags & TM_WIDGET_FLAG_AUTO_RANGE) != 0) {
+        minimum = history[widget->channel_id][0];
+        maximum = minimum;
+        for (int i = 1; i < 16; i++) {
+          if (history[widget->channel_id][i] < minimum)
+            minimum = history[widget->channel_id][i];
+          if (history[widget->channel_id][i] > maximum)
+            maximum = history[widget->channel_id][i];
+        }
+      }
       for (int i = 1; i < 16; i++) {
+        int amount0 = range_amount(history[widget->channel_id][i - 1],
+                                   minimum, maximum);
+        int amount1 = range_amount(history[widget->channel_id][i],
+                                   minimum, maximum);
         int px0 = x1 + (i - 1) * (widget->width - 1) / 15;
         int px1 = x1 + i * (widget->width - 1) / 15;
-        int py0 = y2 - history[widget->channel_id][i - 1] *
-                           (widget->height - 1) / 1000;
-        int py1 = y2 - history[widget->channel_id][i] *
-                           (widget->height - 1) / 1000;
+        int py0 = y2 - amount0 * (widget->height - 1) / 1000;
+        int py1 = y2 - amount1 * (widget->height - 1) / 1000;
         line(px0, py0, px1, py1);
       }
       break;

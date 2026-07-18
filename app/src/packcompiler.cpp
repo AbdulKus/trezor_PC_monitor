@@ -397,7 +397,8 @@ PackCompileResult PackCompiler::compile(const ProjectModel &project) {
     for (const WidgetModel &widget : screen.widgets) {
       tm_widget_t output{};
       output.type = quint8(widget.type);
-      output.flags = widget.inverted ? 1 : 0;
+      output.flags = (widget.inverted ? TM_WIDGET_FLAG_INVERTED : 0) |
+                     (widget.autoRange ? TM_WIDGET_FLAG_AUTO_RANGE : 0);
       output.x = quint8(qBound(0, widget.geometry.x(), 127));
       output.y = quint8(qBound(0, widget.geometry.y(), 63));
       output.width = quint8(qBound(1, widget.geometry.width(), 128 - output.x));

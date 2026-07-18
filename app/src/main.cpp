@@ -2,6 +2,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QIcon>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTabWidget>
@@ -27,6 +28,7 @@ int main(int argc, char *argv[]) {
   QApplication application(argc, argv);
   application.setApplicationName("Trezor PC Monitor");
   application.setOrganizationName("Trezor Community");
+  application.setWindowIcon(QIcon(QStringLiteral(":/icons/pcmonitor.svg")));
   application.setQuitOnLastWindowClosed(false);
   qInstallMessageHandler(logMessage);
   XpTheme::apply(application, "Dark");

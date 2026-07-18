@@ -48,6 +48,7 @@ struct WidgetModel {
   quint16 arg0 = 0;
   quint16 arg1 = 0;
   bool inverted = false;
+  bool autoRange = false;
 };
 
 struct ScreenModel {

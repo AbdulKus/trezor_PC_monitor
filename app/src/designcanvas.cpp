@@ -5,6 +5,8 @@
 #include <QPainterPath>
 #include <QtMath>
 
+#include <algorithm>
+
 #include "pixelfont.h"
 #include "packcompiler.h"
 
@@ -120,15 +122,24 @@ void DesignCanvas::paintWidget(QPainter &p, const WidgetModel &widget) {
     case TM_WIDGET_SPARKLINE: {
       const QVector<double> values = history_.value(widget.metric);
       if (values.size() < 2) {
-        const int y = r.bottom() - int(ratio * qMax(0, r.height() - 1));
+        const int y = widget.autoRange
+                          ? r.center().y()
+                          : r.bottom() - int(ratio * qMax(0, r.height() - 1));
         p.drawLine(r.left(), y, r.right(), y);
         break;
       }
+      double rangeMinimum = widget.minimum;
+      double rangeMaximum = widget.maximum;
+      if (widget.autoRange) {
+        const auto bounds = std::minmax_element(values.cbegin(), values.cend());
+        rangeMinimum = *bounds.first;
+        rangeMaximum = *bounds.second;
+      }
       auto point = [&](int index) {
-        const double normalized = widget.maximum > widget.minimum
-            ? qBound(0.0, (values[index] - widget.minimum) /
-                              double(widget.maximum - widget.minimum), 1.0)
-            : 0.0;
+        const double normalized = rangeMaximum > rangeMinimum
+            ? qBound(0.0, (values[index] - rangeMinimum) /
+                              (rangeMaximum - rangeMinimum), 1.0)
+            : 0.5;
         return QPoint(r.left() + index * qMax(0, r.width() - 1) /
                                      qMax(1, values.size() - 1),
                       r.bottom() - int(normalized * qMax(0, r.height() - 1)));

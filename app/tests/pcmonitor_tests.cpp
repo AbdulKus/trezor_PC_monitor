@@ -216,6 +216,12 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   resource.durationsMs << 100;
   original.resources() << resource;
   original.screens()[1].enabled = false;
+  original.screens().first().widgets[5].autoRange = true;
+  original.actions() << HostAction{42, QStringLiteral("Copy"),
+                                   HostActionType::Shortcut,
+                                   QStringLiteral("CTRL+C"), false};
+  original.screens().first().leftShort =
+      ButtonBinding{TM_ACTION_HOST, 0, 42};
 
   const QString path = directory.filePath("monitor.tmon");
   QString error;
@@ -226,10 +232,18 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   QCOMPARE(loaded.screens()[1].enabled, false);
   QCOMPARE(loaded.resources().size(), 1);
   QCOMPARE(loaded.resources().first().frames.first(), frame);
+  QVERIFY(loaded.screens().first().widgets[5].autoRange);
+  QCOMPARE(loaded.actions().size(), 1);
+  QCOMPARE(loaded.actions().first().value, QStringLiteral("CTRL+C"));
+  QCOMPARE(loaded.screens().first().leftShort.hostActionId, quint16(42));
 }
 
 void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   ProjectModel project;
+  QCOMPARE(project.screens().first().name, QStringLiteral("Экран 8"));
+  QCOMPARE(project.screens().first().widgets.size(), 12);
+  QCOMPARE(project.screens().first().widgets[7].metric,
+           QStringLiteral("gpu.active.load"));
   const PackCompileResult first = PackCompiler::compile(project);
   QVERIFY2(first.ok(), qPrintable(first.error));
   const PackCompileResult second = PackCompiler::compile(project);
@@ -246,15 +260,20 @@ void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   const auto *widgets = reinterpret_cast<const tm_widget_t *>(
       first.data.constData() + header.widgets_offset);
   bool foundPercentGauge = false;
+  bool foundAutoRangeGraph = false;
   for (quint16 i = 0; i < header.widget_count; ++i) {
-    if (widgets[i].type == TM_WIDGET_BAR_HORIZONTAL) {
+    if (widgets[i].type == TM_WIDGET_BAR_HORIZONTAL &&
+        widgets[i].maximum == 10000) {
       QCOMPARE(widgets[i].minimum, qint32(0));
       QCOMPARE(widgets[i].maximum, qint32(10000));
       foundPercentGauge = true;
-      break;
     }
+    if (widgets[i].type == TM_WIDGET_SPARKLINE &&
+        (widgets[i].flags & TM_WIDGET_FLAG_AUTO_RANGE) != 0)
+      foundAutoRangeGraph = true;
   }
   QVERIFY(foundPercentGauge);
+  QVERIFY(foundAutoRangeGraph);
   const quint32 expectedCrc = header.crc32;
   QByteArray withoutCrc = first.data;
   reinterpret_cast<tm_pack_header_t *>(withoutCrc.data())->crc32 = 0;

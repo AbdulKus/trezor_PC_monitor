@@ -5,4 +5,7 @@
     <file alias="spleen-8x16.bdf">fonts/spleen-8x16.bdf</file>
     <file alias="SPLEEN-LICENSE.txt">fonts/SPLEEN-LICENSE.txt</file>
   </qresource>
+  <qresource prefix="/icons">
+    <file alias="pcmonitor.svg">assets/pcmonitor.svg</file>
+  </qresource>
 </RCC>

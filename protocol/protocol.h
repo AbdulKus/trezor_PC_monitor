@@ -19,6 +19,9 @@ extern "C" {
 #define TM_MAX_ANIMATIONS 16u
 #define TM_PACK_VERSION 1u
 
+#define TM_WIDGET_FLAG_INVERTED 0x01u
+#define TM_WIDGET_FLAG_AUTO_RANGE 0x02u
+
 #if defined(_MSC_VER)
 #pragma pack(push, 1)
 #define TM_PACKED
