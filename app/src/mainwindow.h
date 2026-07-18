@@ -101,6 +101,7 @@ class MainWindow : public QMainWindow {
   IconEditor *iconEditor_ = nullptr;
   ResourcePreview *resourcePreview_ = nullptr;
   QListWidget *actionList_ = nullptr;
+  QCheckBox *sharedButtonBindings_ = nullptr;
   QComboBox *bindingCombos_[4]{};
   QSystemTrayIcon *tray_ = nullptr;
   bool deviceConnected_ = false;

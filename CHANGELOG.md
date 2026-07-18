@@ -2,6 +2,22 @@
 
 All notable changes are documented here. Versions follow Semantic Versioning.
 
+## [0.2.1] - 2026-07-19
+
+### Added
+
+- The complete user-provided six-screen project, including its four animated
+  media resources, as the built-in default project.
+- A shared button-assignment mode that keeps all screens on one button layout.
+- Double-click screen renaming in the screen list.
+
+### Changed
+
+- New screens use previous/next page actions by default instead of empty
+  short-press assignments.
+- Default screens are named `Main`, `Monitor+GIF`, `Small data`, `GIF ghost`,
+  `GIF road` and `GIF cat`.
+
 ## [0.2.0] - 2026-07-18
 
 ### Added
@@ -35,3 +51,4 @@ Initial public community release.
 
 [0.1.0]: https://github.com/AbdulKus/trezor_PC_monitor/releases/tag/v0.1.0
 [0.2.0]: https://github.com/AbdulKus/trezor_PC_monitor/releases/tag/v0.2.0
+[0.2.1]: https://github.com/AbdulKus/trezor_PC_monitor/releases/tag/v0.2.1

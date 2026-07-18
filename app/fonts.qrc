@@ -8,4 +8,7 @@
   <qresource prefix="/icons">
     <file alias="pcmonitor.svg">assets/pcmonitor.svg</file>
   </qresource>
+  <qresource prefix="/defaults">
+    <file alias="main.tmon" compress="0">assets/default-main.tmon</file>
+  </qresource>
 </RCC>

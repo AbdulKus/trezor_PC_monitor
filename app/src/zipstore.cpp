@@ -102,7 +102,11 @@ bool ZipStore::read(const QString &path, QHash<QString, QByteArray> *files,
     if (error) *error = input.errorString();
     return false;
   }
-  QByteArray archive = input.readAll();
+  return read(input.readAll(), files, error);
+}
+
+bool ZipStore::read(const QByteArray &archive,
+                    QHash<QString, QByteArray> *files, QString *error) {
   if (archive.size() < 22) {
     if (error) *error = QStringLiteral("Некорректный ZIP: файл слишком короткий");
     return false;

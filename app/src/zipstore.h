@@ -10,4 +10,7 @@ class ZipStore {
                     QString *error = nullptr);
   static bool read(const QString &path, QHash<QString, QByteArray> *files,
                    QString *error = nullptr);
+  static bool read(const QByteArray &archive,
+                   QHash<QString, QByteArray> *files,
+                   QString *error = nullptr);
 };
