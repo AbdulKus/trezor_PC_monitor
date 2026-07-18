@@ -25,7 +25,7 @@ jobs:
           (cd artifacts/firmware && sha256sum -c SHA256SUMS.txt)
 
       - name: Upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcmonitor-firmware-${{ github.sha }}
           path: artifacts/firmware/
