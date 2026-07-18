@@ -23,6 +23,7 @@ add_library(pcmonitor_core
     app/src/pixelfont.cpp
     app/src/resourceimporter.cpp
     app/src/fpsscaler.cpp
+    app/src/metriccodec.cpp
     app/fonts.qrc
     protocol/protocol.c
 )

@@ -1,5 +1,7 @@
 #include "designcanvas.h"
 
+#include "metriccodec.h"
+
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -133,8 +135,7 @@ void DesignCanvas::paintWidget(QPainter &p, const WidgetModel &widget) {
     case TM_WIDGET_DYNAMIC_TEXT:
     case TM_WIDGET_WARNING: {
       QString text = widget.text;
-      text.replace("{v}", sample.valid ? QString::number(sample.value, 'f', widget.precision)
-                                        : QStringLiteral("--"));
+      text.replace("{v}", MetricCodec::format(sample, widget.precision));
       if (PixelFonts::isPixelFont(widget.font.family())) {
         PixelFonts::draw(p, r.x(), r.y(), text, widget.font.family());
       } else {

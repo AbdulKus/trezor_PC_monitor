@@ -9,6 +9,7 @@
 #include "packcompiler.h"
 #include "designcanvas.h"
 #include "fpsscaler.h"
+#include "metriccodec.h"
 #include "protocol.h"
 #include "projectmodel.h"
 #include "zipstore.h"
@@ -266,6 +267,14 @@ void PcMonitorTests::protocolLayoutAndCrc() {
   metric.status = TM_STATUS_STALE;
   tm_format_metric(&metric, 0, formatted);
   QCOMPARE(QByteArray(formatted), QByteArray("--"));
+
+  MetricSample sample{64.496, QStringLiteral("C"), true, false};
+  const tm_metric_entry_t encoded = MetricCodec::encode(7, sample);
+  QCOMPARE(encoded.channel_id, quint16(7));
+  QCOMPARE(encoded.scale_exponent, qint8(-2));
+  QCOMPARE(encoded.value, qint32(6450));
+  QCOMPARE(MetricCodec::format(sample, 0), QStringLiteral("65"));
+  QCOMPARE(MetricCodec::format(sample, 1), QStringLiteral("64.5"));
 }
 
 void PcMonitorTests::zipRoundTripAndRejectsTruncation() {
