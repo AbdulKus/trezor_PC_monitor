@@ -397,7 +397,11 @@ PackCompileResult PackCompiler::compile(const ProjectModel &project) {
     for (const WidgetModel &widget : screen.widgets) {
       tm_widget_t output{};
       output.type = quint8(widget.type);
-      output.flags = widget.inverted ? 1 : 0;
+      output.flags = (widget.inverted ? TM_WIDGET_FLAG_INVERTED : 0) |
+                     (widget.autoRange ? TM_WIDGET_FLAG_AUTO_RANGE : 0) |
+                     (widget.autoRange && widget.metric.contains("fps", Qt::CaseInsensitive)
+                          ? TM_WIDGET_FLAG_FPS_PRESETS
+                          : 0);
       output.x = quint8(qBound(0, widget.geometry.x(), 127));
       output.y = quint8(qBound(0, widget.geometry.y(), 63));
       output.width = quint8(qBound(1, widget.geometry.width(), 128 - output.x));
@@ -469,6 +473,10 @@ PackCompileResult PackCompiler::compile(const ProjectModel &project) {
   header.font_count = quint8(fonts.size());
   header.image_count = quint8(images.size());
   header.animation_count = quint8(animations.size());
+  if (project.burnInProtection()) {
+    header.reserved[0] |= TM_PACK_FLAG_PIXEL_SHIFT;
+    header.reserved[1] = quint8(project.pixelShiftInset());
+  }
   header.widget_count = quint16(widgetRecords.size());
   header.screens_offset = screensOffset;
   header.widgets_offset = widgetsOffset;

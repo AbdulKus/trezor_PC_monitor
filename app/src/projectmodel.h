@@ -48,6 +48,7 @@ struct WidgetModel {
   quint16 arg0 = 0;
   quint16 arg1 = 0;
   bool inverted = false;
+  bool autoRange = false;
 };
 
 struct ScreenModel {
@@ -87,6 +88,10 @@ class ProjectModel : public QObject {
   QString filePath() const { return filePath_; }
   bool modified() const { return modified_; }
   void setModified(bool modified = true);
+  bool burnInProtection() const { return burnInProtection_; }
+  int pixelShiftInset() const { return pixelShiftInset_; }
+  void setBurnInProtection(bool enabled);
+  void setPixelShiftInset(int pixels);
 
   void resetToDefault();
   bool save(const QString &path, QString *error = nullptr);
@@ -106,6 +111,8 @@ class ProjectModel : public QObject {
   int currentScreen_ = 0;
   QString filePath_;
   bool modified_ = false;
+  bool burnInProtection_ = false;
+  int pixelShiftInset_ = 1;
 };
 
 QString widgetTypeName(tm_widget_type_t type);

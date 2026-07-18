@@ -41,8 +41,10 @@ bool ActionExecutor::sendShortcut(const QString &shortcut) {
     else if (part.startsWith('F') && part.mid(1).toInt() >= 1 &&
              part.mid(1).toInt() <= 24)
       key = WORD(VK_F1 + part.mid(1).toInt() - 1);
-    else if (part.size() == 1)
-      key = WORD(VkKeyScanW(part[0].unicode()) & 0xff);
+    else if (part.size() == 1) {
+      const SHORT scan = VkKeyScanW(part[0].unicode());
+      if (scan != -1) key = LOBYTE(scan);
+    }
     else {
       static const QHash<QString, WORD> names = {
           {"SPACE", VK_SPACE}, {"ENTER", VK_RETURN}, {"ESC", VK_ESCAPE},
@@ -82,8 +84,27 @@ void ActionExecutor::execute(quint16 actionId, quint32 eventId) {
                               return action.id == actionId;
                             });
   if (found == project_->actions().cend()) return;
-  const HostAction &action = *found;
-  if (!action.allowWhenLocked && !workstationUnlocked()) return;
+  executeAction(*found);
+}
+
+void ActionExecutor::test(quint16 actionId) {
+  auto found = std::find_if(project_->actions().cbegin(), project_->actions().cend(),
+                            [actionId](const HostAction &action) {
+                              return action.id == actionId;
+                            });
+  if (found == project_->actions().cend()) return;
+  executeAction(*found);
+}
+
+void ActionExecutor::resetEventSequence() { lastEventId_ = 0; }
+
+void ActionExecutor::executeAction(const HostAction &action) {
+  if (!action.allowWhenLocked && !workstationUnlocked()) {
+    emit actionFailed(QStringLiteral(
+        "Действие «%1» заблокировано: сеанс Windows недоступен")
+                          .arg(action.name));
+    return;
+  }
   bool success = true;
   switch (action.type) {
     case HostActionType::Shortcut:
@@ -126,4 +147,6 @@ void ActionExecutor::execute(quint16 actionId, quint32 eventId) {
   }
   if (!success)
     emit actionFailed(QStringLiteral("Не удалось выполнить действие «%1»").arg(action.name));
+  else
+    emit actionCompleted(QStringLiteral("Выполнено: %1").arg(action.name));
 }

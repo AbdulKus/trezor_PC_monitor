@@ -42,4 +42,6 @@ The active package resides only in RAM. Parser code treats all USB and pack fiel
 - display refresh: at most 20 FPS;
 - animation: at most 12 FPS.
 
+When burn-in protection is enabled, the pack reserves a symmetric safe border. The renderer masks pixels outside the unshifted safe area and advances around the configured square perimeter every two minutes. FPS sparklines keep per-channel preset confidence state so short frame-rate drops affect the plotted history but not its vertical scale.
+
 The compiler reports exact usage and refuses a project that exceeds firmware limits.

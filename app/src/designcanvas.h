@@ -8,6 +8,9 @@
 
 #include "projectmodel.h"
 #include "telemetry.h"
+#include "fpsscaler.h"
+
+class QKeyEvent;
 
 class DesignCanvas : public QWidget {
   Q_OBJECT
@@ -23,6 +26,7 @@ class DesignCanvas : public QWidget {
   void widgetGeometryChanged(int index, const QRect &geometry);
  protected:
   void paintEvent(QPaintEvent *) override;
+  void keyPressEvent(QKeyEvent *event) override;
   void mousePressEvent(QMouseEvent *event) override;
   void mouseMoveEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
@@ -33,6 +37,10 @@ class DesignCanvas : public QWidget {
   ProjectModel *project_ = nullptr;
   QHash<QString, MetricSample> samples_;
   QHash<QString, QVector<double>> history_;
+  QHash<QString, double> autoRangeTargets_;
+  QHash<QString, double> autoRangeMaximums_;
+  QHash<QString, QVector<bool>> autoRangeMarkers_;
+  QHash<QString, FpsScaler> fpsScalers_;
   int selected_ = -1;
   bool dragging_ = false;
   bool pixelPerfect_ = true;

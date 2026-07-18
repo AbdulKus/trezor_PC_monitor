@@ -13,6 +13,8 @@ extern "C" {
 
 #include <cstring>
 
+#include "metriccodec.h"
+
 namespace {
 tm_packet_t makePacket(quint8 type, quint8 sequence, const QByteArray &payload) {
   tm_packet_t packet{};
@@ -126,24 +128,6 @@ class HidTransport {
 };
 #endif
 
-tm_metric_entry_t metricEntry(quint16 channel, const MetricSample &sample) {
-  tm_metric_entry_t entry{};
-  entry.channel_id = channel;
-  if (!sample.valid) {
-    entry.status = TM_STATUS_UNAVAILABLE;
-    return entry;
-  }
-  entry.status = sample.estimated ? TM_STATUS_ESTIMATED : TM_STATUS_VALID;
-  if (sample.unit == "%" || sample.unit == "C" || sample.unit == "W" ||
-      sample.unit.isEmpty()) {
-    entry.scale_exponent = -2;
-    entry.value = qint32(qBound(-21474836.0, sample.value, 21474836.0) * 100.0);
-  } else {
-    entry.scale_exponent = 0;
-    entry.value = qint32(qBound(-2147483647.0, sample.value, 2147483647.0));
-  }
-  return entry;
-}
 }  // namespace
 
 DeviceConnection::DeviceConnection(QObject *parent) : QThread(parent) {}
@@ -317,7 +301,8 @@ void DeviceConnection::run() {
       bool full = QDateTime::currentMSecsSinceEpoch() - lastFullSnapshot >= 1500;
       QVector<tm_metric_entry_t> entries;
       for (auto it = activeChannels.constBegin(); it != activeChannels.constEnd(); ++it) {
-        tm_metric_entry_t entry = metricEntry(it.value(), samples.value(it.key()));
+        tm_metric_entry_t entry =
+            MetricCodec::encode(it.value(), samples.value(it.key()));
         QByteArray bytes(reinterpret_cast<const char *>(&entry), sizeof(entry));
         if (full || lastEntries.value(it.value()) != bytes) {
           entries << entry;

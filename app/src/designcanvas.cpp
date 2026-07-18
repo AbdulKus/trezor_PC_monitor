@@ -1,15 +1,51 @@
 #include "designcanvas.h"
 
+#include "metriccodec.h"
+
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSet>
 #include <QtMath>
+
+#include <algorithm>
 
 #include "pixelfont.h"
 #include "packcompiler.h"
 
+namespace {
+constexpr int kSparklineSamples = 16;
+
+QString autoRangeKey(const WidgetModel &widget) {
+  if (!widget.id.isEmpty()) return widget.id;
+  return QStringLiteral("%1:%2:%3:%4:%5")
+      .arg(widget.metric)
+      .arg(widget.geometry.x())
+      .arg(widget.geometry.y())
+      .arg(widget.geometry.width())
+      .arg(widget.geometry.height());
+}
+
+double niceAutoMaximum(double peak) {
+  if (!qIsFinite(peak) || peak <= 0.0) return 1.0;
+  const double padded = peak * 1.15;
+  const double magnitude = qPow(10.0, qFloor(qLn(padded) / qLn(10.0)));
+  const double step = qMax(magnitude / 10.0, 0.000001);
+  return qCeil(padded / step) * step;
+}
+
+bool isFpsMetric(const QString &metric) {
+  return metric.contains(QStringLiteral("fps"), Qt::CaseInsensitive);
+}
+
+}  // namespace
+
 DesignCanvas::DesignCanvas(QWidget *parent) : QWidget(parent) {
-  setMinimumSize(650, 350);
+  setMinimumSize(540, 350);
+  setFocusPolicy(Qt::StrongFocus);
+  setToolTip(QStringLiteral(
+      "Выберите элемент и двигайте его стрелками с шагом 1 пиксель."));
   setMouseTracking(true);
   animationClock_.start();
   animationTimer_.setInterval(83);  // device animations are capped at 12 FPS
@@ -24,11 +60,45 @@ void DesignCanvas::setProject(ProjectModel *project) {
 }
 void DesignCanvas::setSamples(const QHash<QString, MetricSample> &samples) {
   samples_ = samples;
+  QSet<QString> updatedMetrics;
   for (auto it = samples.constBegin(); it != samples.constEnd(); ++it) {
     if (!it.value().valid) continue;
     QVector<double> &values = history_[it.key()];
     values << it.value().value;
-    while (values.size() > 32) values.removeFirst();
+    while (values.size() > kSparklineSamples) values.removeFirst();
+    updatedMetrics.insert(it.key());
+  }
+  if (project_) {
+    for (const ScreenModel &screen : project_->screens()) {
+      for (const WidgetModel &widget : screen.widgets) {
+        if (widget.type != TM_WIDGET_SPARKLINE || !widget.autoRange ||
+            !updatedMetrics.contains(widget.metric))
+          continue;
+        const QVector<double> &values = history_[widget.metric];
+        const QString key = autoRangeKey(widget);
+        bool changed = false;
+        if (isFpsMetric(widget.metric)) {
+          const double value = qMax(0.0, samples.value(widget.metric).value);
+          const qint64 now = animationClock_.elapsed();
+          FpsScaler &scaler = fpsScalers_[key];
+          changed = scaler.update(value, now);
+          autoRangeTargets_[key] = scaler.maximum();
+        } else {
+          const double peak = values.isEmpty()
+                                  ? 0.0
+                                  : *std::max_element(values.cbegin(), values.cend());
+          const double target = niceAutoMaximum(qMax(0.0, peak));
+          const double previous = autoRangeTargets_.value(key, target);
+          changed = autoRangeTargets_.contains(key) &&
+                    !qFuzzyCompare(previous + 1.0, target + 1.0);
+          autoRangeTargets_[key] = target;
+        }
+        QVector<bool> &markers = autoRangeMarkers_[key];
+        markers << changed;
+        while (markers.size() > values.size()) markers.removeFirst();
+        while (markers.size() < values.size()) markers.prepend(false);
+      }
+    }
   }
   update();
 }
@@ -65,8 +135,7 @@ void DesignCanvas::paintWidget(QPainter &p, const WidgetModel &widget) {
     case TM_WIDGET_DYNAMIC_TEXT:
     case TM_WIDGET_WARNING: {
       QString text = widget.text;
-      text.replace("{v}", sample.valid ? QString::number(sample.value, 'f', widget.precision)
-                                        : QStringLiteral("--"));
+      text.replace("{v}", MetricCodec::format(sample, widget.precision));
       if (PixelFonts::isPixelFont(widget.font.family())) {
         PixelFonts::draw(p, r.x(), r.y(), text, widget.font.family());
       } else {
@@ -119,15 +188,57 @@ void DesignCanvas::paintWidget(QPainter &p, const WidgetModel &widget) {
       break;
     case TM_WIDGET_SPARKLINE: {
       const QVector<double> values = history_.value(widget.metric);
+      double rangeMinimum = widget.minimum;
+      double rangeMaximum = widget.maximum;
+      QVector<bool> scaleMarkers;
+      if (widget.autoRange) {
+        const QString key = autoRangeKey(widget);
+        const double peak = values.isEmpty()
+                                ? qMax(0.0, sample.value)
+                                : qMax(0.0, *std::max_element(values.cbegin(),
+                                                              values.cend()));
+        const double target = autoRangeTargets_.value(key,
+                                                       niceAutoMaximum(peak));
+        double displayed = autoRangeMaximums_.value(key, target);
+        if (isFpsMetric(widget.metric)) {
+          displayed = target;
+        } else {
+          const double factor = target > displayed ? 0.42 : 0.035;
+          displayed += (target - displayed) * factor;
+          if (qAbs(target - displayed) < qMax(0.000001, target * 0.002))
+            displayed = target;
+        }
+        displayed = qMax(0.000001, displayed);
+        autoRangeMaximums_[key] = displayed;
+        rangeMinimum = 0.0;
+        rangeMaximum = displayed;
+        scaleMarkers = autoRangeMarkers_.value(key);
+      }
       if (values.size() < 2) {
-        const int y = r.bottom() - int(ratio * qMax(0, r.height() - 1));
+        const double value = values.isEmpty() ? sample.value : values.constLast();
+        const double normalized = rangeMaximum > rangeMinimum
+            ? qBound(0.0, (value - rangeMinimum) /
+                              (rangeMaximum - rangeMinimum), 1.0)
+            : 0.0;
+        const int y = r.bottom() -
+                      int(normalized * qMax(0, r.height() - 1));
         p.drawLine(r.left(), y, r.right(), y);
         break;
       }
+      if (widget.autoRange) {
+        while (scaleMarkers.size() < values.size()) scaleMarkers.prepend(false);
+        const int markerOffset = scaleMarkers.size() - values.size();
+        for (int i = 0; i < values.size(); ++i) {
+          if (!scaleMarkers.value(i + markerOffset)) continue;
+          const int x = r.left() + i * qMax(0, r.width() - 1) /
+                                     qMax(1, values.size() - 1);
+          for (int y = r.top(); y <= r.bottom(); y += 3) p.drawPoint(x, y);
+        }
+      }
       auto point = [&](int index) {
-        const double normalized = widget.maximum > widget.minimum
-            ? qBound(0.0, (values[index] - widget.minimum) /
-                              double(widget.maximum - widget.minimum), 1.0)
+        const double normalized = rangeMaximum > rangeMinimum
+            ? qBound(0.0, (values[index] - rangeMinimum) /
+                              (rangeMaximum - rangeMinimum), 1.0)
             : 0.0;
         return QPoint(r.left() + index * qMax(0, r.width() - 1) /
                                      qMax(1, values.size() - 1),
@@ -204,6 +315,9 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
   int scale = area.width() / 128;
   const bool hasScreen = project_ &&
                          project_->currentScreen() < project_->screens().size();
+  const int safeInset = project_ && project_->burnInProtection()
+                            ? project_->pixelShiftInset()
+                            : 0;
   if (pixelPerfect_) {
     QImage oled(128, 64, QImage::Format_ARGB32);
     oled.fill(Qt::black);
@@ -211,6 +325,10 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
     devicePainter.setRenderHint(QPainter::Antialiasing, false);
     devicePainter.setRenderHint(QPainter::TextAntialiasing, false);
     devicePainter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    if (safeInset > 0)
+      devicePainter.setClipRect(QRect(safeInset, safeInset,
+                                      128 - safeInset * 2,
+                                      64 - safeInset * 2));
     if (hasScreen) {
       const auto &widgets = project_->screens()[project_->currentScreen()].widgets;
       for (const WidgetModel &widget : widgets) paintWidget(devicePainter, widget);
@@ -224,6 +342,10 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
     painter.scale(scale, scale);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
+    if (safeInset > 0)
+      painter.setClipRect(QRect(safeInset, safeInset,
+                                128 - safeInset * 2,
+                                64 - safeInset * 2));
     if (hasScreen) {
       const auto &widgets = project_->screens()[project_->currentScreen()].widgets;
       for (const WidgetModel &widget : widgets) paintWidget(painter, widget);
@@ -243,7 +365,7 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
       painter.drawRect(selected.adjusted(0, 0, -1, -1));
     }
   }
-  if (pixelPerfect_ && scale >= 5) {
+  if (pixelPerfect_ && scale >= 2) {
     painter.setPen(QColor(255, 255, 255, 18));
     for (int x = 1; x < 128; ++x)
       painter.drawLine(area.x() + x * scale, area.y(),
@@ -252,15 +374,60 @@ void DesignCanvas::paintEvent(QPaintEvent *) {
       painter.drawLine(area.x(), area.y() + y * scale,
                        area.right(), area.y() + y * scale);
   }
+  if (safeInset > 0) {
+    const QRect safe(area.x() + safeInset * scale,
+                     area.y() + safeInset * scale,
+                     (128 - safeInset * 2) * scale,
+                     (64 - safeInset * 2) * scale);
+    QPen safePen(QColor("#f59e0b"), 1);
+    safePen.setStyle(Qt::DashLine);
+    painter.setPen(safePen);
+    painter.drawRect(safe.adjusted(0, 0, -1, -1));
+  }
   painter.setPen(QPen(QColor("#475569"), 2));
   painter.drawRect(area.adjusted(-1, -1, 0, 0));
   painter.setPen(QColor("#cbd5e1"));
   painter.drawText(area.x(), area.y() - 8,
-                   pixelPerfect_ ? "128 × 64 · PIXEL PREVIEW"
-                                 : "128 × 64 · SMOOTH PREVIEW");
+                   safeInset > 0
+                       ? QStringLiteral("128 × 64 · SAFE %1 × %2 · SHIFT ±%3 px")
+                             .arg(128 - safeInset * 2)
+                             .arg(64 - safeInset * 2)
+                             .arg(safeInset)
+                       : pixelPerfect_ ? "128 × 64 · PIXEL PREVIEW"
+                                       : "128 × 64 · SMOOTH PREVIEW");
+}
+
+void DesignCanvas::keyPressEvent(QKeyEvent *event) {
+  QPoint delta;
+  switch (event->key()) {
+    case Qt::Key_Left: delta = QPoint(-1, 0); break;
+    case Qt::Key_Right: delta = QPoint(1, 0); break;
+    case Qt::Key_Up: delta = QPoint(0, -1); break;
+    case Qt::Key_Down: delta = QPoint(0, 1); break;
+    default:
+      QWidget::keyPressEvent(event);
+      return;
+  }
+  if (!project_ || selected_ < 0 ||
+      project_->currentScreen() >= project_->screens().size()) {
+    QWidget::keyPressEvent(event);
+    return;
+  }
+  WidgetModel &widget =
+      project_->screens()[project_->currentScreen()].widgets[selected_];
+  QPoint position = widget.geometry.topLeft() + delta;
+  position.setX(qBound(0, position.x(), 128 - widget.geometry.width()));
+  position.setY(qBound(0, position.y(), 64 - widget.geometry.height()));
+  if (position != widget.geometry.topLeft()) {
+    widget.geometry.moveTopLeft(position);
+    emit widgetGeometryChanged(selected_, widget.geometry);
+    update();
+  }
+  event->accept();
 }
 
 void DesignCanvas::mousePressEvent(QMouseEvent *event) {
+  setFocus(Qt::MouseFocusReason);
   if (!project_ || project_->currentScreen() >= project_->screens().size()) return;
   QPoint point = devicePoint(event->position().toPoint());
   const auto &widgets = project_->screens()[project_->currentScreen()].widgets;

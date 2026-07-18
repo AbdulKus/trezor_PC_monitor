@@ -41,10 +41,96 @@ void ProjectModel::setModified(bool modified) {
   if (modified) emit changed();
 }
 
+void ProjectModel::setBurnInProtection(bool enabled) {
+  if (burnInProtection_ == enabled) return;
+  burnInProtection_ = enabled;
+  setModified();
+}
+
+void ProjectModel::setPixelShiftInset(int pixels) {
+  pixels = qBound(1, pixels, 4);
+  if (pixelShiftInset_ == pixels) return;
+  pixelShiftInset_ = pixels;
+  setModified();
+}
+
 void ProjectModel::resetToDefault() {
   screens_.clear();
   resources_.clear();
   actions_.clear();
+  burnInProtection_ = false;
+  pixelShiftInset_ = 1;
+
+  // Compact layout contributed by the user as "Screen 8". It deliberately
+  // starts the default project: the most useful values are readable at a
+  // glance while the narrow centre columns retain RAM/VRAM context.
+  ScreenModel screen8;
+  screen8.name = QStringLiteral("Основной");
+  auto dashboardText = [&](int x, int y, int width, int height,
+                           const QString &text, const QString &metric) {
+    WidgetModel widget;
+    widget.id = newId();
+    widget.type = TM_WIDGET_DYNAMIC_TEXT;
+    widget.geometry = QRect(x, y, width, height);
+    widget.text = text;
+    widget.metric = metric;
+    widget.font.setFamily(QStringLiteral("Spleen 8x16"));
+    widget.font.setPixelSize(16);
+    screen8.widgets << widget;
+  };
+  dashboardText(2, 0, 48, 12, QStringLiteral("CPU:{v}"),
+                QStringLiteral("cpu.total.load"));
+  dashboardText(1, 30, 33, 12, QStringLiteral("t:{v}"),
+                QStringLiteral("cpu.package.temperature"));
+  dashboardText(77, 0, 49, 12, QStringLiteral("GPU:{v}"),
+                QStringLiteral("gpu.active.load"));
+  dashboardText(76, 30, 48, 12, QStringLiteral("t:{v}"),
+                QStringLiteral("gpu.active.temperature"));
+  dashboardText(2, 50, 48, 14, QStringLiteral("FPS:{v}"),
+                QStringLiteral("foreground.fps.displayed"));
+
+  auto dashboardGraph = [&](int x, int y, int width, int height,
+                            const QString &metric, int maximum,
+                            bool autoRange = false) {
+    WidgetModel widget;
+    widget.id = newId();
+    widget.type = TM_WIDGET_SPARKLINE;
+    widget.geometry = QRect(x, y, width, height);
+    widget.metric = metric;
+    widget.maximum = maximum;
+    widget.autoRange = autoRange;
+    screen8.widgets << widget;
+  };
+  dashboardGraph(59, 45, 67, 17,
+                 QStringLiteral("foreground.fps.displayed"), 240, true);
+  dashboardGraph(2, 13, 49, 16, QStringLiteral("cpu.total.load"), 100);
+  dashboardGraph(77, 13, 49, 16, QStringLiteral("gpu.active.load"), 100);
+
+  auto dashboardBar = [&](int x, const QString &metric, int maximum) {
+    WidgetModel widget;
+    widget.id = newId();
+    widget.type = TM_WIDGET_BAR_VERTICAL;
+    widget.geometry = QRect(x, 2, 7, 31);
+    widget.metric = metric;
+    widget.maximum = maximum;
+    screen8.widgets << widget;
+  };
+  dashboardBar(56, QStringLiteral("memory.ram.load"), 100);
+  dashboardBar(65, QStringLiteral("gpu.active.vram.used"), 8192);
+
+  auto dashboardLabel = [&](int x, int y, int width, int height,
+                            const QString &text) {
+    WidgetModel widget;
+    widget.id = newId();
+    widget.type = TM_WIDGET_STATIC_TEXT;
+    widget.geometry = QRect(x, y, width, height);
+    widget.text = text;
+    widget.font.setFamily(QStringLiteral("Spleen 6x12"));
+    widget.font.setPixelSize(12);
+    screen8.widgets << widget;
+  };
+  dashboardLabel(57, 33, 4, 7, QStringLiteral("R"));
+  dashboardLabel(66, 33, 5, 9, QStringLiteral("V"));
 
   ScreenModel overview;
   overview.name = QStringLiteral("Обзор");
@@ -248,7 +334,8 @@ void ProjectModel::resetToDefault() {
   memoryUsed.font.setPixelSize(8);
   memory.widgets << memoryUsed;
 
-  screens_ << essentials << overview << dense << gpu << graphs << memory;
+  screens_ << screen8 << essentials << overview << dense << gpu << graphs
+           << memory;
   for (ScreenModel &screen : screens_) {
     screen.leftShort.type = TM_ACTION_PREVIOUS_PAGE;
     screen.rightShort.type = TM_ACTION_NEXT_PAGE;
@@ -261,7 +348,10 @@ void ProjectModel::resetToDefault() {
 }
 
 QJsonObject ProjectModel::toJson() const {
-  QJsonObject root{{"format", "trezor-pc-monitor"}, {"version", 2}};
+  QJsonObject root{{"format", "trezor-pc-monitor"},
+                   {"version", 4},
+                   {"burnInProtection", burnInProtection_},
+                   {"pixelShiftInset", pixelShiftInset_}};
   QJsonArray screens;
   for (const ScreenModel &screen : screens_) {
     QJsonArray widgets;
@@ -286,6 +376,7 @@ QJsonObject ProjectModel::toJson() const {
           {"arg0", widget.arg0},
           {"arg1", widget.arg1},
           {"inverted", widget.inverted},
+          {"autoRange", widget.autoRange},
       });
     }
     screens.append(QJsonObject{{"name", screen.name},
@@ -327,7 +418,7 @@ QJsonObject ProjectModel::toJson() const {
 bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   const int version = root.value("version").toInt();
   if (root.value("format") != "trezor-pc-monitor" ||
-      (version != 1 && version != 2)) {
+      (version < 1 || version > 4)) {
     if (error) *error = QStringLiteral("Неподдерживаемый формат проекта");
     return false;
   }
@@ -363,6 +454,7 @@ bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
       widget.arg0 = quint16(value.value("arg0").toInt());
       widget.arg1 = quint16(value.value("arg1").toInt());
       widget.inverted = value.value("inverted").toBool();
+      widget.autoRange = value.value("autoRange").toBool(false);
       screen.widgets << widget;
     }
     screen.leftShort = bindingFromJson(object.value("leftShort").toObject());
@@ -401,6 +493,8 @@ bool ProjectModel::fromJson(const QJsonObject &root, QString *error) {
   screens_ = newScreens;
   resources_ = newResources;
   actions_ = newActions;
+  burnInProtection_ = root.value("burnInProtection").toBool(false);
+  pixelShiftInset_ = qBound(1, root.value("pixelShiftInset").toInt(1), 4);
   currentScreen_ = 0;
   return true;
 }

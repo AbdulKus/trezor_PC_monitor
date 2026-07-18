@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TrezorPcMonitor VERSION 0.1.0 LANGUAGES C CXX)
+project(TrezorPcMonitor VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,8 @@ add_library(pcmonitor_core
     app/src/firmwareupdater.cpp
     app/src/pixelfont.cpp
     app/src/resourceimporter.cpp
+    app/src/fpsscaler.cpp
+    app/src/metriccodec.cpp
     app/fonts.qrc
     protocol/protocol.c
 )
@@ -40,13 +42,18 @@ add_executable(trezor-pc-monitor WIN32
     app/src/iconeditor.cpp
     app/src/resourcepreview.cpp
     app/src/xptheme.cpp
+    app/src/i18n.cpp
 )
+if(WIN32)
+  target_sources(trezor-pc-monitor PRIVATE app/windows/pcmonitor.rc)
+endif()
 target_link_libraries(trezor-pc-monitor PRIVATE pcmonitor_core Qt6::Widgets)
 
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   add_executable(pcmonitor_tests
       app/tests/pcmonitor_tests.cpp
+      app/src/designcanvas.cpp
       app/src/resourcepreview.cpp
       app/tests/firmware_stubs.c
       firmware/monitor.c
@@ -58,6 +65,9 @@ if(BUILD_TESTING)
   target_link_libraries(pcmonitor_tests PRIVATE
       pcmonitor_core Qt6::Test Qt6::Widgets)
   add_test(NAME pcmonitor_tests COMMAND pcmonitor_tests)
+  set_tests_properties(pcmonitor_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION
+      "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()
 
 set(PCMONITOR_FIRMWARE_DIR "${CMAKE_SOURCE_DIR}/firmware/prebuilt"

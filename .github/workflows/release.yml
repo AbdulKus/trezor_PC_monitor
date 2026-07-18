@@ -50,6 +50,20 @@ jobs:
           Invoke-WebRequest `
             'https://github.com/GameTechDev/PresentMon/releases/download/v2.5.1/PresentMon-v2.5.1.msi' `
             -OutFile downloads/PresentMon-v2.5.1.msi
+          $presentMonExtract = (Join-Path (Resolve-Path downloads) 'presentmon-sdk')
+          New-Item -ItemType Directory -Force $presentMonExtract | Out-Null
+          $presentMonMsi = (Resolve-Path downloads/PresentMon-v2.5.1.msi).Path
+          $extract = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/a', "`"$presentMonMsi`"", '/qn', "TARGETDIR=`"$presentMonExtract`""
+          )
+          if ($extract.ExitCode -ne 0) {
+            throw "PresentMon MSI extraction failed: $($extract.ExitCode)"
+          }
+          $presentMonDll = Get-ChildItem $presentMonExtract -Recurse `
+            -Filter PresentMonAPI2Loader.dll | Where-Object FullName -match '\\SDK\\' |
+            Select-Object -First 1
+          if (-not $presentMonDll) { throw 'PresentMon SDK loader not found in official MSI' }
+          Copy-Item $presentMonDll.FullName downloads/PresentMonAPI2Loader.dll
           Invoke-WebRequest `
             'https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.7z' `
             -OutFile downloads/libusb.7z
@@ -69,6 +83,7 @@ jobs:
             -OutputDir "artifacts/Trezor-PC-Monitor-v$version-win64" `
             -QtDir $env:QT_ROOT_DIR `
             -PresentMonInstaller downloads/PresentMon-v2.5.1.msi `
+            -PresentMonDll downloads/PresentMonAPI2Loader.dll `
             -LibUsbDll downloads/libusb-1.0.dll
           $folder = "artifacts/Trezor-PC-Monitor-v$version-win64"
           Copy-Item README.md $folder/README.md
@@ -86,7 +101,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Trezor-PC-Monitor-${{ github.ref_name }}-win64
+          name: Trezor-PC-Monitor-win64-${{ github.run_id }}
           path: |
             artifacts/*.zip
             artifacts/*.bin
@@ -102,4 +117,4 @@ jobs:
           gh release create "$env:GITHUB_REF_NAME" `
             artifacts/*.zip artifacts/*.bin artifacts/SHA256SUMS.txt `
             --title "Trezor PC Monitor $env:GITHUB_REF_NAME" `
-            --notes-file docs/release-notes-v0.1.0.md
+            --notes-file "docs/release-notes-$env:GITHUB_REF_NAME.md"

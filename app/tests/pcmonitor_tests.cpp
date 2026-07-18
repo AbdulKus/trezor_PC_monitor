@@ -1,11 +1,15 @@
 #include <QtTest>
 
 #include <QFile>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 #include <cstring>
 
 #include "packcompiler.h"
+#include "designcanvas.h"
+#include "fpsscaler.h"
+#include "metriccodec.h"
 #include "protocol.h"
 #include "projectmodel.h"
 #include "zipstore.h"
@@ -50,9 +54,69 @@ class PcMonitorTests : public QObject {
   void oneBitConversionRespondsImmediately();
   void animatedGifImportsEveryFrame();
   void livePreviewRendersAndAnimates();
+  void selectedWidgetMovesOnePixelWithArrowKeys();
+  void fpsScaleUsesStablePresetBands();
   void packIsDeterministicAndChecksLimits();
   void firmwareParserTransactionsButtonsAndFuzz();
 };
+
+void PcMonitorTests::fpsScaleUsesStablePresetBands() {
+  QVERIFY(FpsScaler::accepts(4, 121.0));
+  QVERIFY(FpsScaler::accepts(4, 151.0));
+  QVERIFY(!FpsScaler::accepts(4, 120.0));
+  QVERIFY(!FpsScaler::accepts(4, 152.0));
+
+  FpsScaler down;
+  QVERIFY(!down.update(144.0, 0));
+  QCOMPARE(down.maximum(), 144.0);
+  for (int timestamp = 250; timestamp < 10000; timestamp += 250) {
+    QVERIFY(!down.update(60.0, timestamp));
+    QCOMPARE(down.maximum(), 144.0);
+  }
+  QVERIFY(down.update(60.0, 10000));
+  QCOMPARE(down.maximum(), 60.0);
+
+  FpsScaler dip;
+  dip.update(144.0, 0);
+  dip.update(30.0, 250);
+  for (int timestamp = 500; timestamp <= 12000; timestamp += 250)
+    QVERIFY(!dip.update(144.0, timestamp));
+  QCOMPARE(dip.maximum(), 144.0);
+
+  FpsScaler up;
+  up.update(144.0, 0);
+  for (int timestamp = 250; timestamp < 10000; timestamp += 250)
+    QVERIFY(!up.update(152.0, timestamp));
+  QVERIFY(up.update(152.0, 10000));
+  QCOMPARE(up.maximum(), 165.0);
+}
+
+void PcMonitorTests::selectedWidgetMovesOnePixelWithArrowKeys() {
+  ProjectModel project;
+  project.screens().first().widgets.clear();
+  WidgetModel widget;
+  widget.id = QStringLiteral("keyboard-nudge");
+  widget.geometry = QRect(10, 10, 20, 8);
+  project.screens().first().widgets << widget;
+
+  DesignCanvas canvas;
+  canvas.setProject(&project);
+  canvas.setSelectedWidget(0);
+  QSignalSpy moved(&canvas, &DesignCanvas::widgetGeometryChanged);
+
+  QTest::keyClick(&canvas, Qt::Key_Right);
+  QTest::keyClick(&canvas, Qt::Key_Down);
+  QCOMPARE(project.screens().first().widgets.first().geometry.topLeft(),
+           QPoint(11, 11));
+  QCOMPARE(moved.count(), 2);
+
+  project.screens().first().widgets.first().geometry.moveTopLeft(QPoint(0, 0));
+  QTest::keyClick(&canvas, Qt::Key_Left);
+  QTest::keyClick(&canvas, Qt::Key_Up);
+  QCOMPARE(project.screens().first().widgets.first().geometry.topLeft(),
+           QPoint(0, 0));
+  QCOMPARE(moved.count(), 2);
+}
 
 void PcMonitorTests::livePreviewRendersAndAnimates() {
   ResourceModel resource;
@@ -179,6 +243,38 @@ void PcMonitorTests::protocolLayoutAndCrc() {
   QCOMPARE(tm_crc32(reinterpret_cast<const uint8_t *>(known.constData()),
                     quint32(known.size())),
            quint32(0xcbf43926));
+
+  tm_metric_entry_t metric{};
+  metric.status = TM_STATUS_VALID;
+  metric.scale_exponent = -2;
+  char formatted[32];
+  metric.value = 6460;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65"));
+  metric.value = 6449;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("64"));
+  metric.value = -6460;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("-65"));
+  metric.value = 6499;
+  tm_format_metric(&metric, 1, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65.0"));
+  metric.scale_exponent = 0;
+  metric.value = 65;
+  tm_format_metric(&metric, 2, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("65.00"));
+  metric.status = TM_STATUS_STALE;
+  tm_format_metric(&metric, 0, formatted);
+  QCOMPARE(QByteArray(formatted), QByteArray("--"));
+
+  MetricSample sample{64.496, QStringLiteral("C"), true, false};
+  const tm_metric_entry_t encoded = MetricCodec::encode(7, sample);
+  QCOMPARE(encoded.channel_id, quint16(7));
+  QCOMPARE(encoded.scale_exponent, qint8(-2));
+  QCOMPARE(encoded.value, qint32(6450));
+  QCOMPARE(MetricCodec::format(sample, 0), QStringLiteral("65"));
+  QCOMPARE(MetricCodec::format(sample, 1), QStringLiteral("64.5"));
 }
 
 void PcMonitorTests::zipRoundTripAndRejectsTruncation() {
@@ -216,6 +312,14 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   resource.durationsMs << 100;
   original.resources() << resource;
   original.screens()[1].enabled = false;
+  original.screens().first().widgets[5].autoRange = true;
+  original.setBurnInProtection(true);
+  original.setPixelShiftInset(2);
+  original.actions() << HostAction{42, QStringLiteral("Copy"),
+                                   HostActionType::Shortcut,
+                                   QStringLiteral("CTRL+C"), false};
+  original.screens().first().leftShort =
+      ButtonBinding{TM_ACTION_HOST, 0, 42};
 
   const QString path = directory.filePath("monitor.tmon");
   QString error;
@@ -226,10 +330,21 @@ void PcMonitorTests::projectRoundTripWithBitmap() {
   QCOMPARE(loaded.screens()[1].enabled, false);
   QCOMPARE(loaded.resources().size(), 1);
   QCOMPARE(loaded.resources().first().frames.first(), frame);
+  QVERIFY(loaded.screens().first().widgets[5].autoRange);
+  QVERIFY(loaded.burnInProtection());
+  QCOMPARE(loaded.pixelShiftInset(), 2);
+  QCOMPARE(loaded.actions().size(), 1);
+  QCOMPARE(loaded.actions().first().value, QStringLiteral("CTRL+C"));
+  QCOMPARE(loaded.screens().first().leftShort.hostActionId, quint16(42));
 }
 
 void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   ProjectModel project;
+  QCOMPARE(project.screens().first().name, QStringLiteral("Основной"));
+  QCOMPARE(project.screens().first().widgets.size(), 12);
+  QCOMPARE(project.screens().first().widgets[5].geometry, QRect(59, 45, 67, 17));
+  QCOMPARE(project.screens().first().widgets[7].metric,
+           QStringLiteral("gpu.active.load"));
   const PackCompileResult first = PackCompiler::compile(project);
   QVERIFY2(first.ok(), qPrintable(first.error));
   const PackCompileResult second = PackCompiler::compile(project);
@@ -246,15 +361,34 @@ void PcMonitorTests::packIsDeterministicAndChecksLimits() {
   const auto *widgets = reinterpret_cast<const tm_widget_t *>(
       first.data.constData() + header.widgets_offset);
   bool foundPercentGauge = false;
+  bool foundAutoRangeGraph = false;
+  bool foundFpsPresetGraph = false;
   for (quint16 i = 0; i < header.widget_count; ++i) {
-    if (widgets[i].type == TM_WIDGET_BAR_HORIZONTAL) {
+    if (widgets[i].type == TM_WIDGET_BAR_HORIZONTAL &&
+        widgets[i].maximum == 10000) {
       QCOMPARE(widgets[i].minimum, qint32(0));
       QCOMPARE(widgets[i].maximum, qint32(10000));
       foundPercentGauge = true;
-      break;
+    }
+    if (widgets[i].type == TM_WIDGET_SPARKLINE &&
+        (widgets[i].flags & TM_WIDGET_FLAG_AUTO_RANGE) != 0) {
+      foundAutoRangeGraph = true;
+      if ((widgets[i].flags & TM_WIDGET_FLAG_FPS_PRESETS) != 0)
+        foundFpsPresetGraph = true;
     }
   }
   QVERIFY(foundPercentGauge);
+  QVERIFY(foundAutoRangeGraph);
+  QVERIFY(foundFpsPresetGraph);
+
+  project.setBurnInProtection(true);
+  project.setPixelShiftInset(3);
+  const PackCompileResult protectedPack = PackCompiler::compile(project);
+  QVERIFY2(protectedPack.ok(), qPrintable(protectedPack.error));
+  const auto *protectedHeader = reinterpret_cast<const tm_pack_header_t *>(
+      protectedPack.data.constData());
+  QVERIFY((protectedHeader->reserved[0] & TM_PACK_FLAG_PIXEL_SHIFT) != 0);
+  QCOMPARE(protectedHeader->reserved[1], quint8(3));
   const quint32 expectedCrc = header.crc32;
   QByteArray withoutCrc = first.data;
   reinterpret_cast<tm_pack_header_t *>(withoutCrc.data())->crc32 = 0;

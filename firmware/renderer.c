@@ -17,6 +17,25 @@ static bool blanked;
 static uint32_t last_render;
 static uint32_t last_activity;
 static uint8_t animation_buffer[FRAME_BYTES];
+static int32_t spark_history[TM_MAX_CHANNELS][16];
+static uint32_t spark_history_time[TM_MAX_CHANNELS];
+static bool spark_history_initialized[TM_MAX_CHANNELS];
+static bool spark_scale_markers[TM_MAX_CHANNELS][16];
+static int32_t spark_auto_targets[TM_MAX_CHANNELS];
+static int32_t spark_auto_maximums[TM_MAX_CHANNELS];
+static uint8_t spark_fps_presets[TM_MAX_CHANNELS];
+static int8_t spark_fps_candidates[TM_MAX_CHANNELS];
+static uint16_t spark_fps_evidence[TM_MAX_CHANNELS];
+static int render_shift_x;
+static int render_shift_y;
+static int render_safe_inset;
+static uint32_t pixel_shift_epoch;
+
+static const int32_t fps_presets[] = {
+    3000, 6000, 9000, 12000, 14400, 16500,
+    18000, 20000, 24000, 30000, 36000, 48000};
+#define FPS_PRESET_COUNT ((int)(sizeof(fps_presets) / sizeof(fps_presets[0])))
+#define FPS_CONFIRMATION_MS 10000u
 
 static bool point_visible(int x, int y) {
   return x >= 0 && x < OLED_WIDTH && y >= 0 && y < OLED_HEIGHT;
@@ -148,50 +167,6 @@ static void append_text(char *output, uint32_t capacity, uint32_t *length,
   while (*value != 0) append_char(output, capacity, length, *value++);
 }
 
-static void format_number(const tm_metric_entry_t *metric, uint8_t precision,
-                          char output[32]) {
-  if (metric == NULL ||
-      (metric->status & (TM_STATUS_UNAVAILABLE | TM_STATUS_STALE)) != 0) {
-    memcpy(output, "--", 3);
-    return;
-  }
-  int64_t value = metric->value;
-  bool negative = value < 0;
-  if (negative) value = -value;
-  int decimals = metric->scale_exponent < 0 ? -metric->scale_exponent : 0;
-  if (decimals > 6) decimals = 6;
-  if (precision < decimals) decimals = precision;
-  for (int i = 0; i < metric->scale_exponent; i++) value *= 10;
-  int64_t divisor = 1;
-  int source_decimals = metric->scale_exponent < 0 ? -metric->scale_exponent : 0;
-  for (int i = 0; i < source_decimals; i++) divisor *= 10;
-  int64_t integer = value / divisor;
-  int64_t fraction = value % divisor;
-  while (source_decimals > decimals) {
-    fraction /= 10;
-    source_decimals--;
-  }
-  char reverse[20];
-  int reverse_len = 0;
-  do {
-    reverse[reverse_len++] = (char)('0' + integer % 10);
-    integer /= 10;
-  } while (integer != 0 && reverse_len < (int)sizeof(reverse));
-  uint32_t length = 0;
-  if (negative) output[length++] = '-';
-  while (reverse_len > 0) output[length++] = reverse[--reverse_len];
-  if (decimals > 0) {
-    output[length++] = '.';
-    int64_t place = 1;
-    for (int i = 1; i < decimals; i++) place *= 10;
-    for (int i = 0; i < decimals; i++) {
-      output[length++] = (char)('0' + (fraction / place) % 10);
-      place /= 10;
-    }
-  }
-  output[length] = 0;
-}
-
 static void format_template(const char *format, const char *value,
                             char output[48]) {
   uint32_t length = 0;
@@ -228,14 +203,100 @@ static int32_t metric_centi_value(const tm_widget_t *widget, bool *valid) {
   return (int32_t)value;
 }
 
+static int range_amount(int32_t value, int32_t minimum, int32_t maximum) {
+  if (maximum <= minimum) return 500;
+  if (value <= minimum) return 0;
+  if (value >= maximum) return 1000;
+  return (int)(((int64_t)value - minimum) * 1000 /
+               ((int64_t)maximum - minimum));
+}
+
+// Keep zero at the bottom and round the upper bound to a calm, readable value.
+// The 15% headroom prevents ordinary sample noise from touching the top edge.
+static int32_t spark_nice_maximum(int32_t peak) {
+  if (peak <= 0) return 100;
+  int64_t padded = ((int64_t)peak * 115 + 99) / 100;
+  int64_t magnitude = 1;
+  while (padded >= magnitude * 10 && magnitude <= INT32_MAX / 10)
+    magnitude *= 10;
+  int64_t step = magnitude / 10;
+  if (step < 1) step = 1;
+  int64_t result = ((padded + step - 1) / step) * step;
+  return result > INT32_MAX ? INT32_MAX : (int32_t)result;
+}
+
+static uint8_t fps_nearest_preset(int32_t value) {
+  uint8_t best = 0;
+  int64_t distance = value > fps_presets[0]
+                         ? (int64_t)value - fps_presets[0]
+                         : (int64_t)fps_presets[0] - value;
+  for (uint8_t i = 1; i < FPS_PRESET_COUNT; i++) {
+    int64_t next = value > fps_presets[i]
+                       ? (int64_t)value - fps_presets[i]
+                       : (int64_t)fps_presets[i] - value;
+    if (next < distance) {
+      best = i;
+      distance = next;
+    }
+  }
+  return best;
+}
+
+static bool fps_preset_accepts(uint8_t index, int32_t value) {
+  if (index >= FPS_PRESET_COUNT) return false;
+  int32_t lower = index == 0 ? 0 : fps_presets[index - 1] + 100;
+  int32_t upper = INT32_MAX;
+  if (index + 1 < FPS_PRESET_COUNT) {
+    int32_t margin = (fps_presets[index + 1] - fps_presets[index]) / 3;
+    if (margin < 600) margin = 600;
+    upper = fps_presets[index] + margin;
+  }
+  return value >= lower && value <= upper;
+}
+
+static void update_fps_preset(uint16_t channel, int32_t value,
+                              uint32_t elapsed_ms, bool *changed) {
+  uint8_t current = spark_fps_presets[channel];
+  int candidate = spark_fps_candidates[channel];
+  uint32_t evidence = spark_fps_evidence[channel];
+  if (candidate >= 0) {
+    if (fps_preset_accepts((uint8_t)candidate, value)) {
+      evidence += elapsed_ms;
+      if (evidence > FPS_CONFIRMATION_MS) evidence = FPS_CONFIRMATION_MS;
+    } else {
+      uint32_t penalty = elapsed_ms * 2;
+      evidence = evidence > penalty ? evidence - penalty : 0;
+      if (evidence == 0) candidate = -1;
+    }
+  }
+  if (candidate < 0 && !fps_preset_accepts(current, value)) {
+    uint8_t next = fps_nearest_preset(value);
+    if (next == current) {
+      if (value > fps_presets[current] && current + 1 < FPS_PRESET_COUNT)
+        next = current + 1;
+      else if (value < fps_presets[current] && current > 0)
+        next = current - 1;
+    }
+    if (next != current && fps_preset_accepts(next, value)) {
+      candidate = next;
+      evidence = elapsed_ms;
+    }
+  }
+  if (candidate >= 0 && evidence >= FPS_CONFIRMATION_MS) {
+    spark_fps_presets[channel] = (uint8_t)candidate;
+    candidate = -1;
+    evidence = 0;
+    *changed = true;
+  }
+  spark_fps_candidates[channel] = (int8_t)candidate;
+  spark_fps_evidence[channel] = (uint16_t)evidence;
+}
+
 static int gauge_amount(const tm_widget_t *widget) {
   bool valid;
   int32_t value = metric_centi_value(widget, &valid);
   if (!valid || widget->maximum <= widget->minimum) return 0;
-  if (value <= widget->minimum) return 0;
-  if (value >= widget->maximum) return 1000;
-  return (int)(((int64_t)(value - widget->minimum) * 1000) /
-               (widget->maximum - widget->minimum));
+  return range_amount(value, widget->minimum, widget->maximum);
 }
 
 static bool decode_rle(const uint8_t *encoded, uint32_t encoded_size,
@@ -286,13 +347,15 @@ static void draw_image(const tm_widget_t *widget) {
   if (decoded_size > sizeof(animation_buffer)) return;
   if (image->encoding == 0) {
     if (image->data_size < decoded_size) return;
-    draw_bits_scaled(widget->x, widget->y, image->width, image->height,
+    draw_bits_scaled(widget->x + render_shift_x, widget->y + render_shift_y,
+                     image->width, image->height,
                      widget->width, widget->height, data);
   } else {
     memset(animation_buffer, 0, decoded_size);
     if (decode_rle(data, image->data_size, animation_buffer, decoded_size,
                    false))
-      draw_bits_scaled(widget->x, widget->y, image->width, image->height,
+      draw_bits_scaled(widget->x + render_shift_x, widget->y + render_shift_y,
+                       image->width, image->height,
                        widget->width, widget->height, animation_buffer);
   }
 }
@@ -332,13 +395,14 @@ static void draw_animation(const tm_widget_t *widget, uint32_t now_ms) {
                                     animation_buffer, decoded_size, true))
       return;
   }
-  draw_bits_scaled(widget->x, widget->y, animation->width, animation->height,
+  draw_bits_scaled(widget->x + render_shift_x, widget->y + render_shift_y,
+                   animation->width, animation->height,
                    widget->width, widget->height, animation_buffer);
 }
 
 static void draw_ring(const tm_widget_t *widget, int amount) {
-  int cx = widget->x + widget->width / 2;
-  int cy = widget->y + widget->height / 2;
+  int cx = widget->x + render_shift_x + widget->width / 2;
+  int cy = widget->y + render_shift_y + widget->height / 2;
   int radius = widget->width < widget->height ? widget->width / 2
                                              : widget->height / 2;
   if (radius > 15) radius = 15;
@@ -366,8 +430,8 @@ static void draw_ring(const tm_widget_t *widget, int amount) {
 }
 
 static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
-  int x1 = widget->x;
-  int y1 = widget->y;
+  int x1 = widget->x + render_shift_x;
+  int y1 = widget->y + render_shift_y;
   int x2 = x1 + widget->width - 1;
   int y2 = y1 + widget->height - 1;
   switch (widget->type) {
@@ -377,8 +441,8 @@ static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
     case TM_WIDGET_DYNAMIC_TEXT: {
       char value[32];
       char formatted[48];
-      format_number(monitor_metric(widget->channel_id), widget->precision,
-                    value);
+      tm_format_metric(monitor_metric(widget->channel_id), widget->precision,
+                       value);
       format_template(pack_string(widget->resource_offset), value, formatted);
       draw_text(x1, y1, formatted, widget->font_id);
       break;
@@ -441,28 +505,87 @@ static void draw_widget(const tm_widget_t *widget, uint32_t now_ms) {
       draw_ring(widget, gauge_amount(widget));
       break;
     case TM_WIDGET_SPARKLINE: {
-      int amount = gauge_amount(widget);
-      static int history[TM_MAX_CHANNELS][16];
-      static uint32_t history_time[TM_MAX_CHANNELS];
-      static bool history_initialized[TM_MAX_CHANNELS];
-      if (!history_initialized[widget->channel_id]) {
-        for (int i = 0; i < 16; i++) history[widget->channel_id][i] = amount;
-        history_initialized[widget->channel_id] = true;
-        history_time[widget->channel_id] = now_ms;
+      bool valid;
+      int32_t value = metric_centi_value(widget, &valid);
+      const uint16_t channel = widget->channel_id;
+      if (!spark_history_initialized[channel] && valid) {
+        for (int i = 0; i < 16; i++) spark_history[channel][i] = value;
+        memset(spark_scale_markers[channel], 0,
+               sizeof(spark_scale_markers[channel]));
+        spark_history_initialized[channel] = true;
+        spark_history_time[channel] = now_ms;
+        spark_fps_presets[channel] = fps_nearest_preset(value);
+        spark_fps_candidates[channel] = -1;
+        spark_fps_evidence[channel] = 0;
+        spark_auto_targets[channel] =
+            (widget->flags & TM_WIDGET_FLAG_FPS_PRESETS) != 0
+                ? fps_presets[spark_fps_presets[channel]]
+                : spark_nice_maximum(value);
+        spark_auto_maximums[channel] = spark_auto_targets[channel];
       }
-      if (now_ms - history_time[widget->channel_id] >= 250) {
-        memmove(&history[widget->channel_id][0],
-                &history[widget->channel_id][1], 15 * sizeof(int));
-        history[widget->channel_id][15] = amount;
-        history_time[widget->channel_id] = now_ms;
+      if (spark_history_initialized[channel] && valid &&
+          now_ms - spark_history_time[channel] >= 250) {
+        uint32_t elapsed = now_ms - spark_history_time[channel];
+        if (elapsed < 100) elapsed = 100;
+        if (elapsed > 1000) elapsed = 1000;
+        memmove(&spark_history[channel][0], &spark_history[channel][1],
+                15 * sizeof(int32_t));
+        memmove(&spark_scale_markers[channel][0],
+                &spark_scale_markers[channel][1], 15 * sizeof(bool));
+        spark_history[channel][15] = value;
+        int32_t peak = 0;
+        for (int i = 0; i < 16; i++)
+          if (spark_history[channel][i] > peak) peak = spark_history[channel][i];
+        spark_scale_markers[channel][15] = false;
+        int32_t next_target;
+        if ((widget->flags & TM_WIDGET_FLAG_FPS_PRESETS) != 0) {
+          bool changed = false;
+          update_fps_preset(channel, value, elapsed, &changed);
+          next_target = fps_presets[spark_fps_presets[channel]];
+          spark_scale_markers[channel][15] = changed;
+        } else {
+          next_target = spark_nice_maximum(peak);
+          spark_scale_markers[channel][15] =
+              spark_auto_targets[channel] != 0 &&
+              next_target != spark_auto_targets[channel];
+        }
+        spark_auto_targets[channel] = next_target;
+        spark_history_time[channel] = now_ms;
+      }
+      if (!spark_history_initialized[channel]) break;
+      int32_t minimum = widget->minimum;
+      int32_t maximum = widget->maximum;
+      if ((widget->flags & TM_WIDGET_FLAG_AUTO_RANGE) != 0) {
+        minimum = 0;
+        int32_t displayed = spark_auto_maximums[channel];
+        int32_t target = spark_auto_targets[channel];
+        if ((widget->flags & TM_WIDGET_FLAG_FPS_PRESETS) != 0) {
+          displayed = target;
+        } else if (displayed < target) {
+          int64_t difference = (int64_t)target - displayed;
+          displayed += (int32_t)((difference + 1) / 2);
+        } else if (displayed > target) {
+          int64_t difference = (int64_t)displayed - target;
+          displayed -= (int32_t)((difference + 31) / 32);
+        }
+        if (displayed < 1) displayed = 1;
+        spark_auto_maximums[channel] = displayed;
+        maximum = displayed;
+        for (int i = 0; i < 16; i++) {
+          if (!spark_scale_markers[channel][i]) continue;
+          int px = x1 + i * (widget->width - 1) / 15;
+          for (int py = y1; py <= y2; py += 3) pixel(px, py, true);
+        }
       }
       for (int i = 1; i < 16; i++) {
+        int amount0 = range_amount(spark_history[channel][i - 1],
+                                   minimum, maximum);
+        int amount1 = range_amount(spark_history[channel][i],
+                                   minimum, maximum);
         int px0 = x1 + (i - 1) * (widget->width - 1) / 15;
         int px1 = x1 + i * (widget->width - 1) / 15;
-        int py0 = y2 - history[widget->channel_id][i - 1] *
-                           (widget->height - 1) / 1000;
-        int py1 = y2 - history[widget->channel_id][i] *
-                           (widget->height - 1) / 1000;
+        int py0 = y2 - amount0 * (widget->height - 1) / 1000;
+        int py1 = y2 - amount1 * (widget->height - 1) / 1000;
         line(px0, py0, px1, py1);
       }
       break;
@@ -502,14 +625,75 @@ static void render_page(uint32_t now_ms) {
       header->widgets_offset, header->widget_count * sizeof(tm_widget_t));
   if (screens == NULL || widgets == NULL) return;
   const tm_screen_t *screen = &screens[monitor_current_page()];
+  render_shift_x = 0;
+  render_shift_y = 0;
+  render_safe_inset = 0;
+  if ((header->reserved[0] & TM_PACK_FLAG_PIXEL_SHIFT) != 0) {
+    int radius = header->reserved[1];
+    if (radius < 1) radius = 1;
+    if (radius > 4) radius = 4;
+    render_safe_inset = radius;
+    uint32_t ticks = (now_ms - pixel_shift_epoch) /
+                     TM_PIXEL_SHIFT_INTERVAL_MS;
+    if (ticks > 0 && ticks <= (uint32_t)radius) {
+      // Walk from the centre to the safe perimeter one physical pixel at a
+      // time. This keeps larger configured offsets as gentle as the default.
+      render_shift_y = -(int)ticks;
+    } else if (ticks > (uint32_t)radius) {
+      uint32_t phase = (ticks - (uint32_t)radius) %
+                       (uint32_t)(8 * radius);
+      if (phase == 0) {
+        render_shift_x = 0;
+        render_shift_y = -radius;
+      } else if (phase <= (uint32_t)radius) {
+        render_shift_x = (int)phase;
+        render_shift_y = -radius;
+      } else if (phase <= (uint32_t)(3 * radius)) {
+        render_shift_x = radius;
+        render_shift_y = -radius + (int)phase - radius;
+      } else if (phase <= (uint32_t)(5 * radius)) {
+        render_shift_x = radius - ((int)phase - 3 * radius);
+        render_shift_y = radius;
+      } else if (phase <= (uint32_t)(7 * radius)) {
+        render_shift_x = -radius;
+        render_shift_y = radius - ((int)phase - 5 * radius);
+      } else {
+        render_shift_x = -radius + ((int)phase - 7 * radius);
+        render_shift_y = -radius;
+      }
+    }
+  }
   oledClear();
   for (uint8_t i = 0; i < screen->widget_count; i++) {
     draw_widget(&widgets[screen->first_widget + i], now_ms);
+  }
+  if (render_safe_inset > 0) {
+    for (int y = 0; y < OLED_HEIGHT; y++) {
+      for (int x = 0; x < OLED_WIDTH; x++) {
+        int source_x = x - render_shift_x;
+        int source_y = y - render_shift_y;
+        if (source_x < render_safe_inset ||
+            source_x >= OLED_WIDTH - render_safe_inset ||
+            source_y < render_safe_inset ||
+            source_y >= OLED_HEIGHT - render_safe_inset)
+          oledClearPixel(x, y);
+      }
+    }
   }
   oledRefresh();
 }
 
 void renderer_init(void) {
+  memset(spark_history, 0, sizeof(spark_history));
+  memset(spark_history_time, 0, sizeof(spark_history_time));
+  memset(spark_history_initialized, 0, sizeof(spark_history_initialized));
+  memset(spark_scale_markers, 0, sizeof(spark_scale_markers));
+  memset(spark_auto_targets, 0, sizeof(spark_auto_targets));
+  memset(spark_auto_maximums, 0, sizeof(spark_auto_maximums));
+  memset(spark_fps_presets, 0, sizeof(spark_fps_presets));
+  memset(spark_fps_candidates, -1, sizeof(spark_fps_candidates));
+  memset(spark_fps_evidence, 0, sizeof(spark_fps_evidence));
+  pixel_shift_epoch = svc_timer_ms();
   dirty = true;
   blanked = false;
   last_render = 0;

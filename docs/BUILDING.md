@@ -59,6 +59,7 @@ The output defaults to `artifacts/Trezor-PC-Monitor-portable`. `windeployqt` cop
 powershell -ExecutionPolicy Bypass -File scripts/package-portable.ps1 `
   -QtDir C:\Qt\6.8.3\msvc2022_64 `
   -PresentMonInstaller .\downloads\PresentMon.msi `
+  -PresentMonDll .\downloads\PresentMonAPI2Loader.dll `
   -LibUsbDll .\downloads\libusb-1.0.dll
 ```
 

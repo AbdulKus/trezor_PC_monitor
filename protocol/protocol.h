@@ -19,6 +19,13 @@ extern "C" {
 #define TM_MAX_ANIMATIONS 16u
 #define TM_PACK_VERSION 1u
 
+#define TM_WIDGET_FLAG_INVERTED 0x01u
+#define TM_WIDGET_FLAG_AUTO_RANGE 0x02u
+#define TM_WIDGET_FLAG_FPS_PRESETS 0x04u
+
+#define TM_PACK_FLAG_PIXEL_SHIFT 0x01u
+#define TM_PIXEL_SHIFT_INTERVAL_MS 120000u
+
 #if defined(_MSC_VER)
 #pragma pack(push, 1)
 #define TM_PACKED
@@ -228,6 +235,8 @@ typedef struct TM_PACKED {
 #endif
 
 uint32_t tm_crc32(const uint8_t *data, uint32_t size);
+void tm_format_metric(const tm_metric_entry_t *metric, uint8_t precision,
+                      char output[32]);
 
 #ifdef __cplusplus
 }

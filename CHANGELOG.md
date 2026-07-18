@@ -2,6 +2,22 @@
 
 All notable changes are documented here. Versions follow Semantic Versioning.
 
+## [0.2.0] - 2026-07-18
+
+### Added
+
+- Automatic visible-history scaling for sparkline graphs, including firmware rendering.
+- The custom dense "Экран 8" dashboard from `main.tmon` as the first default page.
+- A persistent last-project setting in portable data and command-line `.tmon` opening.
+- A consistent application, taskbar, executable and tray icon.
+- A visible shortcut explanation and a **Test selected** action button.
+
+### Fixed
+
+- PC actions disappearing after restart because the application returned to the default project.
+- Button event deduplication remaining stale after a device reconnect.
+- Invalid single-character shortcuts being passed to `SendInput`.
+
 ## [0.1.0] - 2026-07-18
 
 Initial public community release.
@@ -18,3 +34,4 @@ Initial public community release.
 - Firmware wizard, pinned upstream firmware build, portable packaging and GitHub Actions workflows.
 
 [0.1.0]: https://github.com/AbdulKus/trezor_PC_monitor/releases/tag/v0.1.0
+[0.2.0]: https://github.com/AbdulKus/trezor_PC_monitor/releases/tag/v0.2.0
