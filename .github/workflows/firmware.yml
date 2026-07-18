@@ -1,0 +1,32 @@
+name: Firmware build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build pinned Trezor One firmware
+        run: ./scripts/build-firmware.sh
+
+      - name: Verify headers
+        run: |
+          test "$(head -c 4 artifacts/firmware/pcmonitor-inner.bin)" = TRZF
+          test "$(head -c 4 artifacts/firmware/pcmonitor-signed.bin)" = TRZR
+          (cd artifacts/firmware && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcmonitor-firmware-${{ github.sha }}
+          path: artifacts/firmware/
+          if-no-files-found: error

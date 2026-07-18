@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible editor, telemetry, USB or firmware problem
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach wallet seeds, PINs or other secrets. Redact private paths and window titles from logs.
+  - type: input
+    id: version
+    attributes:
+      label: Application version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows build, Trezor model and firmware hash/version
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. Open…\n2. Connect…\n3. Observe…"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Drag files here after removing sensitive information.

@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/fonts">
+    <file alias="spleen-5x8.bdf">fonts/spleen-5x8.bdf</file>
+    <file alias="spleen-6x12.bdf">fonts/spleen-6x12.bdf</file>
+    <file alias="spleen-8x16.bdf">fonts/spleen-8x16.bdf</file>
+    <file alias="SPLEEN-LICENSE.txt">fonts/SPLEEN-LICENSE.txt</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub release (tag ref only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match VERSION=$version"
+          }
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DBUILD_TESTING=ON
+          cmake --build build/windows --config Release --parallel
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          ctest --test-dir build/windows -C Release --output-on-failure
+
+      - name: Download official optional runtimes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force downloads | Out-Null
+          Invoke-WebRequest `
+            'https://github.com/GameTechDev/PresentMon/releases/download/v2.5.1/PresentMon-v2.5.1.msi' `
+            -OutFile downloads/PresentMon-v2.5.1.msi
+          Invoke-WebRequest `
+            'https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.7z' `
+            -OutFile downloads/libusb.7z
+          7z x downloads/libusb.7z -odownloads/libusb -y | Out-Null
+          $dll = Get-ChildItem downloads/libusb -Recurse -Filter libusb-1.0.dll |
+            Where-Object { $_.FullName -match 'MS64|x64' } |
+            Select-Object -First 1
+          if (-not $dll) { throw 'x64 libusb-1.0.dll not found in official archive' }
+          Copy-Item $dll.FullName downloads/libusb-1.0.dll
+
+      - name: Build portable archive
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1 `
+            -BuildDir build/windows `
+            -OutputDir "artifacts/Trezor-PC-Monitor-v$version-win64" `
+            -QtDir $env:QT_ROOT_DIR `
+            -PresentMonInstaller downloads/PresentMon-v2.5.1.msi `
+            -LibUsbDll downloads/libusb-1.0.dll
+          $folder = "artifacts/Trezor-PC-Monitor-v$version-win64"
+          Copy-Item README.md $folder/README.md
+          Compress-Archive -Path "$folder/*" `
+            -DestinationPath "artifacts/Trezor-PC-Monitor-v$version-win64.zip" -CompressionLevel Optimal
+          Copy-Item firmware/prebuilt/pcmonitor-inner.bin "artifacts/pcmonitor-v$version-inner-TRZF.bin"
+          Copy-Item firmware/prebuilt/pcmonitor-signed.bin "artifacts/pcmonitor-v$version-signed-TRZR.bin"
+          $files = Get-ChildItem artifacts -File | Sort-Object Name
+          $sums = foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $sums | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trezor-PC-Monitor-${{ github.ref_name }}-win64
+          path: |
+            artifacts/*.zip
+            artifacts/*.bin
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag' && (github.event_name == 'push' || inputs.publish)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            artifacts/*.zip artifacts/*.bin artifacts/SHA256SUMS.txt `
+            --title "Trezor PC Monitor $env:GITHUB_REF_NAME" `
+            --notes-file docs/release-notes-v0.1.0.md

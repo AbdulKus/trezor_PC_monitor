@@ -1,0 +1,11 @@
+/build/
+/artifacts/
+/.cache/
+/.qt/
+*.user
+*.tmpack
+*.tmon
+portable-data/
+*.log
+.DS_Store
+Thumbs.db

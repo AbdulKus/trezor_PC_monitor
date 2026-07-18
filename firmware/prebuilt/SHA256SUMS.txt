@@ -1,0 +1,2 @@
+f9025de839d5ad5a295bb45754d8d7c587aa54ac09484b8d4fa10e400123dede  pcmonitor-inner.bin
+84295a4bf953398d2b8dfd95fd983babb90822416da6737e99ec20bea1e61347  pcmonitor-signed.bin
